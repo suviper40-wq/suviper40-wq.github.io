@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '1.4.0';
+const VERSIONE = '1.5.0';
 const $ = (s) => document.querySelector(s);
 
 // ---------------------------------------------------------------------------
@@ -23,10 +23,12 @@ const Imp = {
 const DB = (() => {
   let aperto;
   const apri = () => aperto || (aperto = new Promise((ok, no) => {
-    const r = indexedDB.open('rulcio', 1);
+    const r = indexedDB.open('rulcio', 2);
     r.onupgradeneeded = () => {
-      r.result.createObjectStore('lezioni', { keyPath: 'id' });
-      r.result.createObjectStore('audio');
+      const db = r.result;
+      if (!db.objectStoreNames.contains('lezioni')) db.createObjectStore('lezioni', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('audio')) db.createObjectStore('audio');
+      if (!db.objectStoreNames.contains('slide')) db.createObjectStore('slide');
     };
     r.onsuccess = () => ok(r.result);
     r.onerror = () => no(r.error);
@@ -40,7 +42,10 @@ const DB = (() => {
     elimina: async (id) => {
       await req((await store('lezioni', 'readwrite')).delete(id));
       await req((await store('audio', 'readwrite')).delete(id));
+      await req((await store('slide', 'readwrite')).delete(id));
     },
+    salvaSlide: async (id, blob) => req((await store('slide', 'readwrite')).put(blob, id)),
+    leggiSlide: async (id) => req((await store('slide')).get(id)),
     salvaAudio: async (id, blob) => req((await store('audio', 'readwrite')).put(blob, id)),
     leggiAudio: async (id) => req((await store('audio')).get(id)),
     eliminaAudio: async (id) => req((await store('audio', 'readwrite')).delete(id)),
@@ -311,18 +316,38 @@ function svuotaModulo() {
   for (const id of ['#titolo', '#termini', '#testo-trascrizione']) $(id).value = '';
   $('#audio').value = '';
   $('#file-testo').value = '';
+  $('#slide').value = '';
   $('#audio').dispatchEvent(new Event('change'));
+}
+
+// Slide facoltative (PDF): restano sul telefono e vengono mandate a Gemini solo per gli appunti.
+const MAX_SLIDE = 50 * 1024 * 1024;
+function slideValide(f) {
+  if (!f) return null;
+  if (!/pdf$/i.test(f.type) && !/\.pdf$/i.test(f.name)) { toast('Le slide devono essere un PDF (esportale in PDF da PowerPoint)'); return false; }
+  if (f.size > MAX_SLIDE) { toast('Il PDF delle slide supera 50 MB: non verrà usato'); return false; }
+  return f;
+}
+async function allegaSlide(l, f) {
+  try {
+    await DB.salvaSlide(l.id, f);
+    l.nomeSlide = f.name;
+    l.fileSlide = null;
+  } catch (_) { toast('Non riesco a salvare le slide sul telefono'); }
 }
 
 $('#crea').addEventListener('click', async () => {
   if (!Imp.chiave) { toast('Prima inserisci la chiave Gemini'); vai('impostazioni'); return; }
   const f = $('#audio').files[0];
   if (!f) { toast('Scegli prima la registrazione'); return; }
+  const s = slideValide($('#slide').files[0]);
+  if (s === false) return;
   const l = {
     id: nuovoId(), creata: new Date().toISOString(), ...leggiModulo(),
     nomeFile: f.name, mime: f.type, dimensione: f.size,
     stato: 'carica', trascrizione: '', appunti: '', errore: '',
   };
+  if (s) await allegaSlide(l, s);
   await DB.salva(l);
   try { await DB.salvaAudio(l.id, f); } catch (_) { /* senza copia locale non si potrà riprendere senza riscegliere il file */ }
   svuotaModulo();
@@ -339,11 +364,14 @@ $('#crea-da-testo').addEventListener('click', async () => {
   const testo = $('#testo-trascrizione').value.trim();
   if (testo.length < 200) { toast('La trascrizione è troppo corta'); return; }
   const nomeTxt = $('#file-testo').files[0] ? $('#file-testo').files[0].name : '';
+  const s = slideValide($('#slide').files[0]);
+  if (s === false) return;
   const l = {
     id: nuovoId(), creata: new Date().toISOString(), ...leggiModulo(),
     nomeFile: nomeTxt || 'trascrizione', stato: 'appunti', trascrizione: testo, appunti: '', errore: '',
   };
   if (!l.titolo && nomeTxt) l.titolo = senzaEstensione(nomeTxt);
+  if (s) await allegaSlide(l, s);
   await DB.salva(l);
   svuotaModulo();
   $('#da-testo').hidden = true;
@@ -502,6 +530,30 @@ async function avvia(l, audio) {
   }
 }
 
+// Carica su Gemini il PDF delle slide (se c'è); un problema con le slide non blocca gli appunti.
+async function preparaSlide(l, chiave, signal) {
+  if (!l.nomeSlide) return null;
+  if (fileAncoraValido(l.fileSlide)) return l.fileSlide;
+  let blob = null;
+  try { blob = await DB.leggiSlide(l.id); } catch (_) { blob = null; }
+  if (!blob) return null;
+  try {
+    const f = await caricaFile(chiave, blob, 'application/pdf', nomeFileSicuro(l.nomeSlide), {
+      signal,
+      onProgress: (p) => infoPasso('appunti', `invio delle slide… ${Math.round(p * 100)}%`),
+    });
+    infoPasso('appunti', 'Gemini sta leggendo le slide…');
+    const a = await attendiFileAttivo(chiave, f.name, { signal });
+    l.fileSlide = { name: a.name, uri: a.uri, scade: a.expirationTime };
+    await DB.salva(l);
+    return l.fileSlide;
+  } catch (e) {
+    if (e.name === 'AbortError') throw e;
+    toast('Slide non usate: ' + (e.message || e), 6000);
+    return null;
+  }
+}
+
 async function trascriviABlocchi(l, audio, file, chiave, modelli, signal) {
   if (l.durata === undefined || l.durata === null) {
     infoPasso('trascrivi', 'misuro la durata della registrazione…');
@@ -647,8 +699,10 @@ async function eseguiLavoro(l, audio, signal) {
   passo('appunti', 'attivo');
   l.stato = 'appunti';
   await DB.salva(l);
+  const slide = await preparaSlide(l, chiave, signal);
+  const allegati = slide ? [{ file_data: { mime_type: 'application/pdf', file_uri: slide.uri } }] : [];
   const fermaTimerAppunti = attesaConTimer('appunti');
-  const r = await conModelli(modelli.appunti, (m) => genera(chiave, m.id, [{ text: promptAppunti(l) }], {
+  const r = await conModelli(modelli.appunti, (m) => genera(chiave, m.id, [...allegati, { text: promptAppunti(l, !!slide) }], {
     maxOutputTokens: m.outputMax || undefined,
     temperature: 0.2,
     signal,
@@ -657,6 +711,7 @@ async function eseguiLavoro(l, audio, signal) {
   l.appunti = pulisciMarkdown(r.testo);
   l.appuntiTroncati = r.troncato;
   l.modelloAppunti = r.modello;
+  l.slideUsate = !!slide;
   if (!l.titolo) l.titolo = titoloDaAppunti(l.appunti) || senzaEstensione(l.nomeFile);
   l.controllo = null;
   l.stato = 'controllo';
@@ -668,7 +723,7 @@ async function eseguiLavoro(l, audio, signal) {
   passo('controllo', 'attivo');
   const fermaTimerControllo = attesaConTimer('controllo');
   try {
-    const c = await conModelli(modelli.controllo, (m) => generaJSON(chiave, m.id, promptControllo(l), SCHEMA_CONTROLLO, {
+    const c = await conModelli(modelli.controllo, (m) => generaJSON(chiave, m.id, [...allegati, { text: promptControllo(l, !!slide) }], SCHEMA_CONTROLLO, {
       maxOutputTokens: m.outputMax || undefined,
       signal,
       onText: (t) => { if (!t) return; fermaTimerControllo(); infoPasso('controllo', 'confronto con la trascrizione…'); },
@@ -704,7 +759,7 @@ const SCHEMA_CONTROLLO = {
 };
 
 // Chiede una risposta JSON; se il modello non accetta lo schema, lo chiede solo a parole.
-async function generaJSON(chiave, modello, prompt, schema, opzioni) {
+async function generaJSON(chiave, modello, parts, schema, opzioni) {
   const leggi = (testo) => {
     const t = testo.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
     const i = t.indexOf('{');
@@ -714,12 +769,12 @@ async function generaJSON(chiave, modello, prompt, schema, opzioni) {
   };
   let r;
   try {
-    r = await genera(chiave, modello, [{ text: prompt }], {
+    r = await genera(chiave, modello, parts, {
       ...opzioni, temperature: 0, extraConfig: { responseMimeType: 'application/json', responseSchema: schema },
     });
   } catch (e) {
     if (!(e instanceof GeminiError && e.status === 400)) throw e;
-    r = await genera(chiave, modello, [{ text: prompt }], { ...opzioni, temperature: 0 });
+    r = await genera(chiave, modello, parts, { ...opzioni, temperature: 0 });
   }
   return { ...r, json: leggi(r.testo) };
 }
@@ -796,6 +851,7 @@ async function apriLezione(id) {
   }
 
   mostraControllo(l);
+  mostraSlide(l);
   const art = $('#appunti');
   if (l.appunti) {
     art.hidden = false;
@@ -817,6 +873,27 @@ async function apriLezione(id) {
     art.textContent = '';
   }
 }
+
+// Riquadro delle slide: si possono aggiungere o cambiare anche dopo, poi si preme Rigenera.
+function mostraSlide(l) {
+  $('#slide-box').hidden = !l.trascrizione;
+  $('#slide-stato').textContent = l.nomeSlide
+    ? `Slide: ${l.nomeSlide}${l.appunti && !l.slideUsate ? ' (non ancora usate: premi Rigenera)' : ''}`
+    : 'Nessuna slide allegata.';
+  $('#slide-cambia').textContent = l.nomeSlide ? 'Cambia slide' : 'Aggiungi slide (PDF)';
+}
+$('#slide-cambia').addEventListener('click', () => $('#slide-lezione').click());
+$('#slide-lezione').addEventListener('change', async () => {
+  const f = slideValide($('#slide-lezione').files[0]);
+  $('#slide-lezione').value = '';
+  if (!f) return;
+  const l = await DB.leggi(lezioneAperta);
+  await allegaSlide(l, f);
+  l.slideUsate = false;
+  await DB.salva(l);
+  mostraSlide(l);
+  toast('Slide allegate: premi "Rigenera" per rifare gli appunti con le slide', 5000);
+});
 
 // Riquadro con le correzioni fatte dal controllo, per vedere cosa è cambiato e perché.
 function mostraControllo(l) {

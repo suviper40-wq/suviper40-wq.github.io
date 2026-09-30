@@ -55,6 +55,10 @@
         <textarea id="termini" rows="2" placeholder="es. fluoroforo, FRET, bromuro di etidio"></textarea>
       </label>
       <p class="aiuto">Parole difficili della lezione (nomi, sigle, autori): aiutano a scriverle giuste.</p>
+      <label>Slide della lezione <span class="facolt">(PDF, facoltativo)</span>
+        <input type="file" id="slide" accept="application/pdf,.pdf">
+      </label>
+      <p class="aiuto">Se le hai, Gemini le usa per scrivere giusti termini, numeri e formule e per completare gli argomenti spiegati.</p>
       <button class="primario grande" id="crea">Crea gli appunti</button>
       <button class="link" id="apri-testo">Ho già la trascrizione</button>
       <div id="da-testo" hidden>
@@ -99,6 +103,11 @@
       <button class="pericolo" id="elimina">Elimina</button>
     </div>
     <div id="lezione-stato" class="card" hidden></div>
+    <div id="slide-box" class="card riga-slide" hidden>
+      <span id="slide-stato"></span>
+      <button class="secondario" id="slide-cambia">Aggiungi slide (PDF)</button>
+      <input type="file" id="slide-lezione" accept="application/pdf,.pdf" hidden>
+    </div>
     <details id="controllo-box" class="card" hidden><summary id="controllo-titolo"></summary><div id="controllo-elenco"></div></details>
     <article id="appunti" class="appunti"></article>
   </section>
