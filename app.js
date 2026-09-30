@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '1.2.0';
+const VERSIONE = '1.3.0';
 const $ = (s) => document.querySelector(s);
 
 // ---------------------------------------------------------------------------
@@ -387,6 +387,13 @@ async function tieniSchermoAcceso() {
   };
 }
 
+// Google azzera le quote giornaliere a mezzanotte, ora del Pacifico.
+const giornoQuota = () => new Date(Date.now() - 8 * 3600e3).toISOString().slice(0, 10);
+const esaurito = (m) => leggiLS('rulcio.esaurito.' + m.id) === giornoQuota();
+const segnaEsaurito = (id) => scriviLS('rulcio.esaurito.' + id, giornoQuota());
+
+// Un elenco di modelli per ogni compito. La trascrizione usa Flash (basta, e ha più quota);
+// gli appunti provano prima Pro, che scrive meglio, e ne consumano una sola richiesta per lezione.
 async function assicuraModelli(chiave) {
   let modelli = Imp.modelli;
   if (!modelli.length) {
@@ -394,13 +401,20 @@ async function assicuraModelli(chiave) {
     Imp.modelli = modelli;
   }
   if (!modelli.length) throw new Error('La chiave non dà accesso a nessun modello Gemini adatto.');
-  const scelto = modelli.find((m) => m.id === Imp.modello);
-  const altri = modelli.filter((m) => m !== scelto);
-  // un paio di "flash" e almeno un "flash-lite" come riserva, se la quota gratuita finisce
-  const riserva = altri.filter((m) => /flash/.test(m.id)).slice(0, 3);
-  const lite = altri.find((m) => /flash-lite/.test(m.id));
-  if (lite && !riserva.includes(lite)) riserva.push(lite);
-  return [...(scelto ? [scelto] : []), ...riserva];
+  const disponibili = modelli.filter((m) => !esaurito(m));
+  const lista = disponibili.length ? disponibili : modelli;
+  const pro = lista.filter((m) => /pro/.test(m.id) && !/flash/.test(m.id));
+  const flash = lista.filter((m) => /flash/.test(m.id) && !/lite/.test(m.id));
+  const lite = lista.filter((m) => /flash-lite/.test(m.id));
+  const scelto = lista.find((m) => m.id === Imp.modello);
+  const primo = (arr, m) => (m ? [m, ...arr.filter((x) => x !== m)] : arr);
+  const veloci = [...flash.slice(0, 3), ...lite.slice(0, 1)];
+  const base = veloci.length ? veloci : lista.slice(0, 4);
+  return {
+    trascrizione: primo(base, scelto && !pro.includes(scelto) ? scelto : null),
+    appunti: primo([...pro.slice(0, 2), ...base], scelto),
+    controllo: base,
+  };
 }
 
 // Prova i modelli in ordine. Sul limite "al minuto" aspetta e riprova lo stesso modello;
@@ -428,6 +442,7 @@ async function conModelli(modelli, fn, { signal, onAttesa } = {}) {
           await attendi(5000, signal);
           continue;
         }
+        if (e instanceof GeminiError && e.status === 429) segnaEsaurito(m.id);
         if (e instanceof GeminiError && (e.status === 429 || e.status === 404 || e.status >= 500)) {
           toast(`${m.nome || m.id}: ${e.status === 429 ? 'quota del giorno finita' : 'non disponibile'}, provo un altro modello`);
           break;
@@ -463,7 +478,7 @@ async function avvia(l, audio) {
   lavoro = { id: l.id, controller };
   lezioneAperta = l.id;
   $('#lavoro-titolo').textContent = l.titolo || senzaEstensione(l.nomeFile) || 'Nuova lezione';
-  for (const p of ['carica', 'trascrivi', 'appunti']) passo(p, '', '');
+  for (const p of ['carica', 'trascrivi', 'appunti', 'controllo']) passo(p, '', '');
   anteprima('');
   vai('lavoro', 'In corso');
   const rilascia = await tieniSchermoAcceso();
@@ -476,7 +491,7 @@ async function avvia(l, audio) {
     l.stato = 'errore';
     l.errore = e.name === 'AbortError' ? 'Annullato.' : (e.message || String(e));
     await DB.salva(l);
-    for (const p of ['carica', 'trascrivi', 'appunti']) {
+    for (const p of ['carica', 'trascrivi', 'appunti', 'controllo']) {
       if ($(`#passi [data-passo="${p}"]`).classList.contains('attivo')) passo(p, 'errore');
     }
     if (vistaCorrente === 'lavoro') apriLezione(l.id);
@@ -604,7 +619,7 @@ async function eseguiLavoro(l, audio, signal) {
       l.stato = 'trascrivi';
       await DB.salva(l);
       try {
-        await trascriviABlocchi(l, audio, file, chiave, modelli, signal);
+        await trascriviABlocchi(l, audio, file, chiave, modelli.trascrizione, signal);
         break;
       } catch (e) {
         if (erroreFormato(e) && audio && tentativo < mimes.length - 1 && !(l.parti || []).length) {
@@ -633,9 +648,9 @@ async function eseguiLavoro(l, audio, signal) {
   l.stato = 'appunti';
   await DB.salva(l);
   const fermaTimerAppunti = attesaConTimer('appunti');
-  const r = await conModelli(modelli, (m) => genera(chiave, m.id, [{ text: promptAppunti(l) }], {
+  const r = await conModelli(modelli.appunti, (m) => genera(chiave, m.id, [{ text: promptAppunti(l) }], {
     maxOutputTokens: m.outputMax || undefined,
-    temperature: 0.4,
+    temperature: 0.2,
     signal,
     onText: (t) => { if (!t) return; fermaTimerAppunti(); infoPasso('appunti', `${parole(t)} parole`); anteprima(t); },
   }), { signal, onAttesa: (msg) => { fermaTimerAppunti(); infoPasso('appunti', msg); } }).finally(fermaTimerAppunti);
@@ -643,10 +658,105 @@ async function eseguiLavoro(l, audio, signal) {
   l.appuntiTroncati = r.troncato;
   l.modelloAppunti = r.modello;
   if (!l.titolo) l.titolo = titoloDaAppunti(l.appunti) || senzaEstensione(l.nomeFile);
+  l.controllo = null;
+  l.stato = 'controllo';
+  await DB.salva(l);
+  passo('appunti', 'fatto', `${parole(l.appunti)} parole`);
+
+  // Controllo: un secondo passaggio confronta gli appunti con la trascrizione e corregge
+  // ciò che non torna. Se non riesce, gli appunti restano comunque (non controllati).
+  passo('controllo', 'attivo');
+  const fermaTimerControllo = attesaConTimer('controllo');
+  try {
+    const c = await conModelli(modelli.controllo, (m) => generaJSON(chiave, m.id, promptControllo(l), SCHEMA_CONTROLLO, {
+      maxOutputTokens: m.outputMax || undefined,
+      signal,
+      onText: (t) => { if (!t) return; fermaTimerControllo(); infoPasso('controllo', 'confronto con la trascrizione…'); },
+    }), { signal, onAttesa: (msg) => { fermaTimerControllo(); infoPasso('controllo', msg); } });
+    const esito = applicaCorrezioni(l.appunti, (c.json && c.json.correzioni) || []);
+    l.appunti = esito.testo;
+    l.controllo = { applicate: esito.applicate, saltate: esito.saltate, modello: c.modello };
+    passo('controllo', 'fatto', `${esito.applicate.length} correzioni`);
+  } catch (e) {
+    l.controllo = { errore: e.name === 'AbortError' ? 'annullato' : (e.message || String(e)) };
+    passo('controllo', 'errore', 'non eseguito');
+  } finally {
+    fermaTimerControllo();
+  }
   l.stato = 'pronta';
   l.errore = '';
   await DB.salva(l);
-  passo('appunti', 'fatto');
+}
+
+const SCHEMA_CONTROLLO = {
+  type: 'OBJECT',
+  properties: {
+    correzioni: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: { trova: { type: 'STRING' }, sostituisci: { type: 'STRING' }, motivo: { type: 'STRING' } },
+        required: ['trova', 'sostituisci', 'motivo'],
+      },
+    },
+  },
+  required: ['correzioni'],
+};
+
+// Chiede una risposta JSON; se il modello non accetta lo schema, lo chiede solo a parole.
+async function generaJSON(chiave, modello, prompt, schema, opzioni) {
+  const leggi = (testo) => {
+    const t = testo.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+    const i = t.indexOf('{');
+    const j = t.lastIndexOf('}');
+    if (i < 0 || j < i) throw new GeminiError('Risposta del controllo non leggibile.');
+    return JSON.parse(t.slice(i, j + 1));
+  };
+  let r;
+  try {
+    r = await genera(chiave, modello, [{ text: prompt }], {
+      ...opzioni, temperature: 0, extraConfig: { responseMimeType: 'application/json', responseSchema: schema },
+    });
+  } catch (e) {
+    if (!(e instanceof GeminiError && e.status === 400)) throw e;
+    r = await genera(chiave, modello, [{ text: prompt }], { ...opzioni, temperature: 0 });
+  }
+  return { ...r, json: leggi(r.testo) };
+}
+
+// Applica le correzioni del controllo solo dove il testo da cambiare si trova davvero negli appunti.
+function applicaCorrezioni(md, correzioni) {
+  let testo = md;
+  const applicate = [];
+  let saltate = 0;
+  const escapeRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const c of correzioni.slice(0, 60)) {
+    const trova = String((c && c.trova) || '').trim();
+    const sost = String((c && c.sostituisci) || '').trim();
+    const titolo = /^#{1,6}\s/;
+    if (!trova || trova === sost || trova.length > 800 || sost.length > trova.length * 3 + 400 ||
+        (titolo.test(trova) && !titolo.test(sost))) { saltate++; continue; }
+    let i = testo.indexOf(trova);
+    let lung = trova.length;
+    if (i < 0) {
+      const m = new RegExp(trova.split(/\s+/).map(escapeRe).join('\\s+')).exec(testo);
+      if (m) { i = m.index; lung = m[0].length; }
+    }
+    if (i < 0) { saltate++; continue; }
+    testo = testo.slice(0, i) + sost + testo.slice(i + lung);
+    applicate.push({ prima: trova, dopo: sost, motivo: String((c && c.motivo) || '') });
+  }
+  // un titolo ## o ### rimasto senza contenuto (es. la sua unica frase era inventata) si toglie
+  const righe = testo.split('\n');
+  const livello = (r) => { const m = /^(#{1,6})\s/.exec(r); return m ? m[1].length : 0; };
+  const tenute = righe.filter((r, i) => {
+    const lv = livello(r);
+    if (lv < 2) return true;
+    let j = i + 1;
+    while (j < righe.length && !righe[j].trim()) j++;
+    return !(j >= righe.length || (livello(righe[j]) && livello(righe[j]) <= lv));
+  });
+  return { testo: tenute.join('\n').replace(/\n{3,}/g, '\n\n'), applicate, saltate };
 }
 
 $('#annulla').addEventListener('click', () => {
@@ -685,6 +795,7 @@ async function apriLezione(id) {
     else if (l.trascrizioneTroncata) stato.append(...pulsantiRitrascrivi(l));
   }
 
+  mostraControllo(l);
   const art = $('#appunti');
   if (l.appunti) {
     art.hidden = false;
@@ -704,6 +815,39 @@ async function apriLezione(id) {
   } else {
     art.hidden = true;
     art.textContent = '';
+  }
+}
+
+// Riquadro con le correzioni fatte dal controllo, per vedere cosa è cambiato e perché.
+function mostraControllo(l) {
+  const box = $('#controllo-box');
+  const elenco = $('#controllo-elenco');
+  elenco.textContent = '';
+  box.open = false;
+  if (!l.appunti || !l.controllo) { box.hidden = true; return; }
+  box.hidden = false;
+  if (l.controllo.errore) {
+    $('#controllo-titolo').textContent = 'Controllo non eseguito';
+    const p = document.createElement('p');
+    p.className = 'aiuto';
+    p.textContent = `Gli appunti non sono stati ricontrollati (${l.controllo.errore}). Puoi premere "Rigenera" più tardi.`;
+    elenco.append(p);
+    return;
+  }
+  const n = l.controllo.applicate.length;
+  $('#controllo-titolo').textContent = n ? `Controllo: ${n} ${n === 1 ? 'correzione' : 'correzioni'} rispetto alla trascrizione` : 'Controllo: nessuna correzione necessaria';
+  for (const c of l.controllo.applicate) {
+    const d = document.createElement('div');
+    d.className = 'correzione';
+    const m = document.createElement('div');
+    m.className = 'motivo';
+    m.textContent = c.motivo || 'Correzione';
+    const prima = document.createElement('del');
+    prima.textContent = c.prima;
+    const dopo = document.createElement('ins');
+    dopo.textContent = c.dopo || '(tolto)';
+    d.append(m, prima, document.createElement('br'), dopo);
+    elenco.append(d);
   }
 }
 
@@ -854,7 +998,7 @@ $('#indietro').addEventListener('click', tornaHome);
   // Un lavoro rimasto a metà (app chiusa o ricaricata) diventa "da riprendere".
   try {
     for (const l of await DB.tutte()) {
-      if (['carica', 'trascrivi', 'appunti'].includes(l.stato)) {
+      if (['carica', 'trascrivi', 'appunti', 'controllo'].includes(l.stato)) {
         l.stato = 'errore';
         l.errore = 'Interrotto (l\'app è stata chiusa o il telefono ha sospeso il lavoro).';
         await DB.salva(l);

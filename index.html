@@ -81,6 +81,7 @@
         <li data-passo="carica"><span class="pallino"></span><div><b>Invio della registrazione</b><small data-info></small></div></li>
         <li data-passo="trascrivi"><span class="pallino"></span><div><b>Trascrizione</b><small data-info></small></div></li>
         <li data-passo="appunti"><span class="pallino"></span><div><b>Scrittura degli appunti</b><small data-info></small></div></li>
+        <li data-passo="controllo"><span class="pallino"></span><div><b>Controllo degli appunti</b><small data-info></small></div></li>
       </ol>
       <p class="avviso">Tieni l'app aperta e lo schermo acceso finché non ha finito: se passi a un'altra app il telefono potrebbe interrompere il lavoro (potrai comunque riprenderlo).</p>
       <details id="anteprima-box"><summary>Anteprima</summary><pre id="anteprima"></pre></details>
@@ -98,6 +99,7 @@
       <button class="pericolo" id="elimina">Elimina</button>
     </div>
     <div id="lezione-stato" class="card" hidden></div>
+    <details id="controllo-box" class="card" hidden><summary id="controllo-titolo"></summary><div id="controllo-elenco"></div></details>
     <article id="appunti" class="appunti"></article>
   </section>
 
@@ -119,10 +121,10 @@
     </div>
     <div class="card">
       <h2>Modello</h2>
-      <label>Modello usato
+      <label>Modello preferito per gli appunti
         <select id="modello"><option value="">Automatico (consigliato)</option></select>
       </label>
-      <p class="aiuto">In automatico l'app usa il Gemini Flash più recente e, se la quota gratuita è finita, passa da sola a un altro modello (per esempio Flash-Lite, con una quota giornaliera più ampia).</p>
+      <p class="aiuto">In automatico la trascrizione usa Gemini Flash, mentre gli appunti provano prima Gemini Pro, che scrive meglio (una sola richiesta Pro per lezione). Un secondo passaggio con Flash controlla gli appunti confrontandoli con la trascrizione. Se la quota gratuita di un modello finisce, l'app passa da sola a un altro fino al giorno dopo.</p>
     </div>
     <div class="card">
       <h2>Da sapere</h2>
