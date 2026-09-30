@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '1.3.0';
+const VERSIONE = '1.4.0';
 const $ = (s) => document.querySelector(s);
 
 // ---------------------------------------------------------------------------
@@ -413,7 +413,7 @@ async function assicuraModelli(chiave) {
   return {
     trascrizione: primo(base, scelto && !pro.includes(scelto) ? scelto : null),
     appunti: primo([...pro.slice(0, 2), ...base], scelto),
-    controllo: base,
+    controllo: [...pro.slice(0, 2), ...base], // il controllo è il passaggio che decide la fedeltà: meglio Pro
   };
 }
 
@@ -730,11 +730,11 @@ function applicaCorrezioni(md, correzioni) {
   const applicate = [];
   let saltate = 0;
   const escapeRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  for (const c of correzioni.slice(0, 60)) {
+  for (const c of correzioni.slice(0, 100)) {
     const trova = String((c && c.trova) || '').trim();
     const sost = String((c && c.sostituisci) || '').trim();
     const titolo = /^#{1,6}\s/;
-    if (!trova || trova === sost || trova.length > 800 || sost.length > trova.length * 3 + 400 ||
+    if (!trova || trova === sost || trova.length > 3000 || sost.length > trova.length * 2 + 300 ||
         (titolo.test(trova) && !titolo.test(sost))) { saltate++; continue; }
     let i = testo.indexOf(trova);
     let lung = trova.length;

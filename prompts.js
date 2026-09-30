@@ -41,6 +41,7 @@ COMPLETEZZA: APPUNTI, NON UN RIASSUNTO
 - Se il docente si esprime in modo impreciso o scorretto, riporta ciò che ha detto e aggiungi la correzione come *(nota: ...)*.
 - FEDELTÀ: ogni affermazione deve trovare riscontro nella trascrizione. Non aggiungere dettagli, aggettivi, numeri, date, nomi o esempi che il docente non ha detto, anche se ti sembrano plausibili o utili.
 - Non correggere mai in silenzio: se un dato del docente ti sembra sbagliato, riporta il suo e aggiungi la correzione in una *(nota: ...)*.
+- Solo se un passaggio detto dal docente non si capisce senza un'informazione che lui non ha dato, puoi aggiungerla in modo breve (1-2 frasi) come *(approfondimento: ...)*. Mai approfondimenti su argomenti che il docente non ha trattato.
 
 STILE: DISCORSIVO, NON A ELENCHI PUNTATI
 - Scrivi in prosa, con paragrafi che spiegano e collegano i concetti, come un buon libro di testo o degli appunti ben scritti. Mantieni il ragionamento del docente (perché, come, cosa ne consegue), non ridurlo a parole chiave.
@@ -59,7 +60,7 @@ FORMATO (Markdown)
 3. Una sezione "## " per ogni argomento, nell'ordine della lezione, scritta in prosa. Sottosezioni "### " se servono.
 4. Formule in LaTeX: $$...$$ su riga propria per quelle importanti, $...$ nel testo, spiegando il significato dei simboli.
 5. Quando il docente dice che un argomento sarà chiesto all'esame, segnalo con ⚠️ all'inizio della frase o del titolo.
-6. Se il docente descrive uno schema o un grafico importante e ridisegnarlo aiuta davvero, puoi inserirlo come SVG semplice (viewBox, linee, frecce, testo leggibile), altrimenti descrivilo a parole.
+6. Se il docente descrive uno schema o un grafico importante e ridisegnarlo aiuta davvero, puoi inserirlo come SVG semplice (viewBox, linee, frecce, testo leggibile), altrimenti descrivilo a parole. MAI schemi disegnati con caratteri di testo (frecce ---> , barre, trattini) e mai blocchi di codice.
 7. "## Riepilogo": pochi paragrafi brevi con ciò che va ricordato.
 8. "## Domande di ripasso": 5-8 domande sugli argomenti segnalati per l'esame (lista numerata).
 9. Rileggi prima di rispondere: niente refusi, niente parole spezzate.
@@ -77,23 +78,26 @@ ${trascrizione}`;
 }
 
 function promptControllo({ trascrizione, appunti }) {
-  return `Sei un revisore scientifico molto attento. Ti do la TRASCRIZIONE di una lezione universitaria e gli APPUNTI scritti a partire da essa. Confronta gli appunti con la trascrizione, frase per frase, e trova:
+  return `Sei un revisore scientifico molto attento. Ti do la TRASCRIZIONE di una lezione universitaria e gli APPUNTI scritti a partire da essa. Gli appunti devono contenere SOLO ciò che ha detto il docente. Confrontali con la trascrizione, frase per frase, e correggi:
 
-1. Affermazioni, dettagli, aggettivi, esempi o numeri che il docente NON ha detto (inventati o aggiunti): vanno tolti o riscritti in modo fedele a ciò che ha detto.
-2. Valori numerici, unità di misura, nomi e sigle diversi da quelli detti dal docente: vanno riportati come nella trascrizione (salvo evidenti errori di trascrizione dell'audio).
-3. Errori o imprecisioni scientifiche del docente riportati senza segnalazione: lascia ciò che ha detto e aggiungi subito dopo una *(nota: ...)* con la correzione.
-4. Dati del docente corretti in silenzio negli appunti: riporta il dato del docente e metti la correzione in una *(nota: ...)*.
-5. Punti che il docente ha detto di chiedere all'esame e che negli appunti non sono segnati con ⚠️: aggiungi ⚠️ all'inizio della frase.
-6. Informazioni pratiche (esame, materiale, argomenti esclusi) attribuite al docente ma non presenti nella trascrizione: vanno tolte.
+1. CONTENUTI NON DETTI DAL DOCENTE: frasi, dettagli, meccanismi, nomi, formule, esempi o valori numerici che nella trascrizione non ci sono (anche se scientificamente corretti, "da libro di testo").
+   - Di regola vanno TOLTI, oppure la frase va riscritta tenendo solo la parte detta dal docente.
+   - ECCEZIONE, i buchi: se togliendoli un passaggio che il docente ha spiegato diventerebbe incomprensibile o monco, sostituiscili con un approfondimento BREVE (al massimo 1-2 frasi) scritto così: *(approfondimento: ...)*. Solo per colmare un buco, mai per aggiungere argomenti.
+   - Gli approfondimenti già presenti e scritti così vanno bene se brevi e necessari; altrimenti accorciali o toglili.
+2. Valori numerici, unità di misura, nomi e sigle diversi da quelli detti dal docente: riportali come nella trascrizione (salvo evidenti errori di trascrizione dell'audio).
+3. Errori o imprecisioni del docente riportati senza segnalazione, o corretti in silenzio: riporta ciò che ha detto e aggiungi subito dopo una *(nota: ...)* con la correzione.
+4. Punti che il docente ha detto di chiedere all'esame e che negli appunti non sono segnati con ⚠️: aggiungi ⚠️ all'inizio della frase.
+5. Informazioni pratiche (esame, materiale, argomenti esclusi, modalità delle prove) non presenti nella trascrizione: vanno tolte.
+6. Schemi disegnati con caratteri di testo o blocchi di codice (\`\`\`): sostituiscili con una breve descrizione a parole.
 
-Non cambiare lo stile, non riassumere, non aggiungere argomenti nuovi e non toccare ciò che è corretto.
+Non cambiare lo stile, non riassumere ciò che il docente ha detto e non toccare ciò che è corretto e presente nella trascrizione.
 
 Rispondi SOLO con un oggetto JSON di questa forma:
 {"correzioni":[{"trova":"...","sostituisci":"...","motivo":"..."}]}
-- "trova": un pezzo di testo copiato ESATTAMENTE dagli appunti (stesse parole, punteggiatura e simboli Markdown), il più breve possibile ma unico; di solito una frase o parte di frase. Mai un titolo intero o una sezione intera.
+- "trova": un pezzo di testo copiato ESATTAMENTE dagli appunti (stesse parole, punteggiatura e simboli Markdown), unico; può essere una parte di frase, una frase, una voce di elenco o un paragrafo intero se è tutto da togliere. Mai un titolo.
 - "sostituisci": il testo che deve prenderne il posto (stringa vuota per eliminarlo).
-- "motivo": breve spiegazione in italiano.
-- Al massimo 40 correzioni. Se non c'è niente da correggere rispondi {"correzioni":[]}.
+- "motivo": breve spiegazione in italiano (es. "non detto dal docente", "approfondimento per colmare un buco", "il docente ha detto 450 nm").
+- Al massimo 80 correzioni: dai la precedenza ai contenuti non detti più lunghi. Se non c'è niente da correggere rispondi {"correzioni":[]}.
 
 TRASCRIZIONE
 ${trascrizione}
