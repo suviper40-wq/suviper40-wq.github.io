@@ -122,6 +122,11 @@ dialog p { margin: 8px 0; font-size: 15px; }
 .spunta { display: flex; gap: 8px; align-items: center; font-weight: 500; margin-top: 12px; }
 .riga-pulsanti { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 #lezione-stato button { margin-top: 10px; }
+#controllo-box summary { margin: 0; }
+.correzione { border-top: 1px solid var(--bordo); padding: 8px 0; font-size: 14px; }
+.correzione .motivo { font-weight: 600; }
+.correzione del { color: var(--errore); }
+.correzione ins { color: var(--ok); text-decoration: none; }
 #toast {
   position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 20px); transform: translateX(-50%);
   background: #222; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 14px;
@@ -158,7 +163,7 @@ dialog p { margin: 8px 0; font-size: 15px; }
 @media print {
   @page { size: A4; margin: 16mm 15mm; }
   body { background: #fff; }
-  .barra, #toast, dialog, .vista:not(#v-lezione), .azioni, #lezione-stato { display: none !important; }
+  .barra, #toast, dialog, .vista:not(#v-lezione), .azioni, #lezione-stato, #controllo-box { display: none !important; }
   main { padding: 0; max-width: none; }
   .appunti { border: 0; padding: 0; border-radius: 0; font-size: 10.5pt; line-height: 1.45; }
   .appunti p { text-align: justify; hyphens: auto; }

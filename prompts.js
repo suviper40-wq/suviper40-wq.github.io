@@ -39,6 +39,8 @@ COMPLETEZZA: APPUNTI, NON UN RIASSUNTO
 - Riporta TUTTI i dati che il docente dice: valori numerici con unità di misura (lunghezze d'onda, tempi, dimensioni, distanze, frequenze), nomi, sigle con il loro significato, esempi, esperimenti e casi clinici o applicativi.
 - Ogni volta che il docente dice o fa capire che una cosa sarà chiesta all'esame ("lo chiedo", "mettetelo", "ricordatevi", "domanda aperta/multipla", "questo non vi sarà chiesto"), riportalo: ⚠️ per ciò che chiederà, e una nota esplicita per ciò che ha escluso.
 - Se il docente si esprime in modo impreciso o scorretto, riporta ciò che ha detto e aggiungi la correzione come *(nota: ...)*.
+- FEDELTÀ: ogni affermazione deve trovare riscontro nella trascrizione. Non aggiungere dettagli, aggettivi, numeri, date, nomi o esempi che il docente non ha detto, anche se ti sembrano plausibili o utili.
+- Non correggere mai in silenzio: se un dato del docente ti sembra sbagliato, riporta il suo e aggiungi la correzione in una *(nota: ...)*.
 
 STILE: DISCORSIVO, NON A ELENCHI PUNTATI
 - Scrivi in prosa, con paragrafi che spiegano e collegano i concetti, come un buon libro di testo o degli appunti ben scritti. Mantieni il ragionamento del docente (perché, come, cosa ne consegue), non ridurlo a parole chiave.
@@ -72,4 +74,30 @@ Termini tecnici indicati: ${termini || '(nessuno)'}
 
 TRASCRIZIONE
 ${trascrizione}`;
+}
+
+function promptControllo({ trascrizione, appunti }) {
+  return `Sei un revisore scientifico molto attento. Ti do la TRASCRIZIONE di una lezione universitaria e gli APPUNTI scritti a partire da essa. Confronta gli appunti con la trascrizione, frase per frase, e trova:
+
+1. Affermazioni, dettagli, aggettivi, esempi o numeri che il docente NON ha detto (inventati o aggiunti): vanno tolti o riscritti in modo fedele a ciò che ha detto.
+2. Valori numerici, unità di misura, nomi e sigle diversi da quelli detti dal docente: vanno riportati come nella trascrizione (salvo evidenti errori di trascrizione dell'audio).
+3. Errori o imprecisioni scientifiche del docente riportati senza segnalazione: lascia ciò che ha detto e aggiungi subito dopo una *(nota: ...)* con la correzione.
+4. Dati del docente corretti in silenzio negli appunti: riporta il dato del docente e metti la correzione in una *(nota: ...)*.
+5. Punti che il docente ha detto di chiedere all'esame e che negli appunti non sono segnati con ⚠️: aggiungi ⚠️ all'inizio della frase.
+6. Informazioni pratiche (esame, materiale, argomenti esclusi) attribuite al docente ma non presenti nella trascrizione: vanno tolte.
+
+Non cambiare lo stile, non riassumere, non aggiungere argomenti nuovi e non toccare ciò che è corretto.
+
+Rispondi SOLO con un oggetto JSON di questa forma:
+{"correzioni":[{"trova":"...","sostituisci":"...","motivo":"..."}]}
+- "trova": un pezzo di testo copiato ESATTAMENTE dagli appunti (stesse parole, punteggiatura e simboli Markdown), il più breve possibile ma unico; di solito una frase o parte di frase. Mai un titolo intero o una sezione intera.
+- "sostituisci": il testo che deve prenderne il posto (stringa vuota per eliminarlo).
+- "motivo": breve spiegazione in italiano.
+- Al massimo 40 correzioni. Se non c'è niente da correggere rispondi {"correzioni":[]}.
+
+TRASCRIZIONE
+${trascrizione}
+
+APPUNTI
+${appunti}`;
 }

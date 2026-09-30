@@ -160,13 +160,14 @@ async function eliminaFile(key, nome) {
 }
 
 // Genera testo in streaming: onText riceve il testo completo accumulato finora.
-async function genera(key, modello, parts, { maxOutputTokens, temperature = 0.3, thinkingConfig, onText, signal } = {}) {
+async function genera(key, modello, parts, { maxOutputTokens, temperature = 0.3, thinkingConfig, extraConfig, onText, signal } = {}) {
   const body = {
     contents: [{ role: 'user', parts }],
     generationConfig: {
       temperature,
       ...(maxOutputTokens ? { maxOutputTokens } : {}),
       ...(thinkingConfig ? { thinkingConfig } : {}),
+      ...(extraConfig || {}),
     },
   };
   const res = await geminiFetch(key, `/v1beta/models/${modello}:streamGenerateContent?alt=sse`, {
