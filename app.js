@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '1.1.0';
+const VERSIONE = '1.2.0';
 const $ = (s) => document.querySelector(s);
 
 // ---------------------------------------------------------------------------
@@ -850,7 +850,6 @@ $('#apri-impostazioni').addEventListener('click', () => vai('impostazioni'));
 $('#indietro').addEventListener('click', tornaHome);
 
 (async function avvio() {
-  $('#data').value = new Date().toISOString().slice(0, 10);
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (_) { /* facoltativo */ }
   // Un lavoro rimasto a metà (app chiusa o ricaricata) diventa "da riprendere".
   try {

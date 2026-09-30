@@ -28,8 +28,17 @@ ${termini ? `\nTermini che compaiono nella lezione (usa questa grafia): ${termin
 Rispondi solo con la trascrizione.`;
 }
 
-function promptAppunti({ titolo, materia, data, termini, trascrizione }) {
+function promptAppunti({ titolo, materia, data, termini, trascrizione, durata }) {
+  const parole = (trascrizione || '').trim().split(/\s+/).length;
+  const minuti = Number.isFinite(durata) && durata > 0 ? Math.round(durata / 60) : Math.round(parole / 110);
+  const obiettivo = Math.max(1500, Math.round(Math.max(minuti * 30, parole * 0.3) / 100) * 100);
   return `Sei un tutor universitario. Dalla trascrizione di una lezione devi scrivere gli appunti con cui uno studente studierà per l'esame.
+
+COMPLETEZZA: APPUNTI, NON UN RIASSUNTO
+- La lezione dura circa ${minuti} minuti. Gli appunti devono coprire TUTTI gli argomenti e i passaggi spiegati, con lo stesso livello di dettaglio del docente: indicativamente almeno ${obiettivo} parole (di più se la lezione è densa). Non condensare.
+- Riporta TUTTI i dati che il docente dice: valori numerici con unità di misura (lunghezze d'onda, tempi, dimensioni, distanze, frequenze), nomi, sigle con il loro significato, esempi, esperimenti e casi clinici o applicativi.
+- Ogni volta che il docente dice o fa capire che una cosa sarà chiesta all'esame ("lo chiedo", "mettetelo", "ricordatevi", "domanda aperta/multipla", "questo non vi sarà chiesto"), riportalo: ⚠️ per ciò che chiederà, e una nota esplicita per ciò che ha escluso.
+- Se il docente si esprime in modo impreciso o scorretto, riporta ciò che ha detto e aggiungi la correzione come *(nota: ...)*.
 
 STILE: DISCORSIVO, NON A ELENCHI PUNTATI
 - Scrivi in prosa, con paragrafi che spiegano e collegano i concetti, come un buon libro di testo o degli appunti ben scritti. Mantieni il ragionamento del docente (perché, come, cosa ne consegue), non ridurlo a parole chiave.
@@ -38,7 +47,7 @@ STILE: DISCORSIVO, NON A ELENCHI PUNTATI
 - Usa il grassetto per termini e definizioni chiave, con misura.
 
 PULIZIA
-- Elimina riempitivi, ripetizioni, battute, digressioni e chiacchiere. Raccogli invece in una sezione "Info pratiche" date d'esame, compiti e avvisi del docente (ometti la sezione se non ce ne sono).
+- Elimina riempitivi, ripetizioni, battute, digressioni e chiacchiere. Raccogli invece in una sezione "## Info pratiche", subito dopo l'indice, tutto ciò che riguarda l'organizzazione: date d'esame, modalità delle domande, materiale (slide, libro, piattaforme), argomenti esclusi dal programma, avvisi (ometti la sezione solo se non c'è davvero nulla).
 - Correggi gli errori di trascrizione, soprattutto termini tecnici, nomi propri e formule. Se un passaggio è incomprensibile o dubbio, scrivi **[?]** invece di inventare.
 - Non aggiungere contenuti che il docente non ha detto. Se aggiungi un chiarimento o correggi un'imprecisione del docente, segnalo come *(nota: ...)*.
 
@@ -50,7 +59,8 @@ FORMATO (Markdown)
 5. Quando il docente dice che un argomento sarà chiesto all'esame, segnalo con ⚠️ all'inizio della frase o del titolo.
 6. Se il docente descrive uno schema o un grafico importante e ridisegnarlo aiuta davvero, puoi inserirlo come SVG semplice (viewBox, linee, frecce, testo leggibile), altrimenti descrivilo a parole.
 7. "## Riepilogo": pochi paragrafi brevi con ciò che va ricordato.
-8. "## Domande di ripasso": 3-5 domande (lista numerata).
+8. "## Domande di ripasso": 5-8 domande sugli argomenti segnalati per l'esame (lista numerata).
+9. Rileggi prima di rispondere: niente refusi, niente parole spezzate.
 
 Rispondi solo con gli appunti in Markdown, senza premesse e senza blocchi di codice attorno.
 
