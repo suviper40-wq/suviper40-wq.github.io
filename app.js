@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '1.6.0';
+const VERSIONE = '1.7.0';
 const $ = (s) => document.querySelector(s);
 
 // ---------------------------------------------------------------------------
@@ -479,12 +479,21 @@ async function assicuraModelli(chiave) {
   const primo = (arr, m) => (m ? [m, ...arr.filter((x) => x !== m)] : arr);
   const veloci = [...flash.slice(0, 3), ...lite.slice(0, 1)];
   const base = veloci.length ? veloci : lista.slice(0, 4);
+  // La trascrizione usa solo Flash: Flash-Lite non rispetta bene i blocchi di tempo e ripete testo.
+  // Se la quota di Flash è finita l'elenco resta vuoto e il lavoro si ferma (si riprende il giorno dopo).
+  const esisteFlash = modelli.some((m) => /flash/.test(m.id) && !/lite/.test(m.id));
+  const flashLiberi = modelli.filter((m) => /flash/.test(m.id) && !/lite/.test(m.id) && !esaurito(m)).slice(0, 3);
+  const perTrascrivere = esisteFlash ? flashLiberi : base;
   return {
-    trascrizione: primo(base, scelto && !pro.includes(scelto) ? scelto : null),
+    trascrizione: primo(perTrascrivere, scelto && perTrascrivere.includes(scelto) ? scelto : null),
     appunti: primo([...pro.slice(0, 2), ...base], scelto),
     controllo: [...pro.slice(0, 2), ...base], // il controllo è il passaggio che decide la fedeltà: meglio Pro
   };
 }
+
+const MSG_QUOTA = 'La quota gratuita di oggi di Gemini è finita. Riprova domani dopo le 9 (ora italiana): il lavoro fatto finora resta salvato.';
+const MSG_QUOTA_FLASH = 'La quota gratuita di oggi di Gemini Flash è finita (Flash-Lite non si usa per trascrivere: sbaglia troppo). Riprova domani dopo le 9 (ora italiana): il lavoro fatto finora resta salvato.';
+const nomeModello = (m) => (m.nome || m.id).replace(/^Gemini\s+/i, 'Gemini ');
 
 // Prova i modelli in ordine. Sul limite "al minuto" aspetta e riprova lo stesso modello;
 // se la quota del giorno è finita o il modello non risponde, passa al successivo.
@@ -520,6 +529,7 @@ async function conModelli(modelli, fn, { signal, onAttesa } = {}) {
       }
     }
   }
+  if (ultimo instanceof GeminiError && ultimo.status === 429) throw new Error(MSG_QUOTA);
   throw ultimo || new Error('Nessun modello disponibile.');
 }
 
@@ -655,7 +665,7 @@ async function trascriviBlocco(l, file, chiave, modelli, signal, inizio, fine, e
             if (!t) return;
             fermaTimer();
             ultimo = t;
-            infoPasso('trascrivi', `${etichetta}: ${parole(t)} parole`);
+            infoPasso('trascrivi', `${etichetta} · ${nomeModello(m)}: ${parole(t)} parole`);
             anteprima(t);
             if (loop || oltre) return;
             const orario = ultimoOrario(t);
@@ -722,6 +732,7 @@ async function eseguiLavoro(l, audio, signal) {
   const modelli = await assicuraModelli(chiave);
 
   if (!l.trascrizione) {
+    if (!modelli.trascrizione.length) throw new Error(MSG_QUOTA_FLASH);
     passo('carica', 'attivo', '');
     if (!audio) { try { audio = await DB.leggiAudio(l.id); } catch (_) { audio = null; } }
     const mimes = mimeCandidati(l.nomeFile, l.mime);
@@ -785,7 +796,7 @@ async function eseguiLavoro(l, audio, signal) {
     maxOutputTokens: m.outputMax || undefined,
     temperature: 0.2,
     signal,
-    onText: (t) => { if (!t) return; fermaTimerAppunti(); infoPasso('appunti', `${parole(t)} parole`); anteprima(t); },
+    onText: (t) => { if (!t) return; fermaTimerAppunti(); infoPasso('appunti', `${nomeModello(m)}: ${parole(t)} parole`); anteprima(t); },
   }), { signal, onAttesa: (msg) => { fermaTimerAppunti(); infoPasso('appunti', msg); } }).finally(fermaTimerAppunti);
   l.appunti = pulisciMarkdown(r.testo);
   l.appuntiTroncati = r.troncato;
@@ -805,7 +816,7 @@ async function eseguiLavoro(l, audio, signal) {
     const c = await conModelli(modelli.controllo, (m) => generaJSON(chiave, m.id, [...allegati, { text: promptControllo(l, !!slide) }], SCHEMA_CONTROLLO, {
       maxOutputTokens: m.outputMax || undefined,
       signal,
-      onText: (t) => { if (!t) return; fermaTimerControllo(); infoPasso('controllo', 'confronto con la trascrizione…'); },
+      onText: (t) => { if (!t) return; fermaTimerControllo(); infoPasso('controllo', `${nomeModello(m)}: confronto con la trascrizione…`); },
     }), { signal, onAttesa: (msg) => { fermaTimerControllo(); infoPasso('controllo', msg); } });
     const esito = applicaCorrezioni(l.appunti, (c.json && c.json.correzioni) || []);
     l.appunti = esito.testo;
