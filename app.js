@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '1.0.0';
+const VERSIONE = '1.0.1';
 const $ = (s) => document.querySelector(s);
 
 // ---------------------------------------------------------------------------
@@ -265,6 +265,17 @@ function passo(nome, stato, info) {
   if (info !== undefined) li.querySelector('[data-info]').textContent = info;
 }
 function infoPasso(nome, info) { $(`#passi [data-passo="${nome}"] [data-info]`).textContent = info; }
+// Mostra da quanto si aspetta la prima risposta di Gemini; si ferma al primo testo ricevuto.
+function attesaConTimer(nome) {
+  const inizio = Date.now();
+  const aggiorna = () => {
+    const s = Math.floor((Date.now() - inizio) / 1000);
+    infoPasso(nome, `in attesa della risposta… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
+  };
+  aggiorna();
+  const t = setInterval(aggiorna, 1000);
+  return () => clearInterval(t);
+}
 function anteprima(t) { $('#anteprima').textContent = t.length > 4000 ? '…' + t.slice(-4000) : t; }
 
 async function tieniSchermoAcceso() {
@@ -371,9 +382,10 @@ async function eseguiLavoro(l, audio, signal) {
         await DB.salva(l);
       }
       passo('carica', 'fatto', audio ? mb(audio.size) : 'già inviata');
-      passo('trascrivi', 'attivo', 'in attesa della risposta…');
+      passo('trascrivi', 'attivo');
       l.stato = 'trascrivi';
       await DB.salva(l);
+      const fermaTimer = attesaConTimer('trascrivi');
       try {
         const r = await conModelli(modelli, (m) => genera(chiave, m.id, [
           { file_data: { mime_type: file.mimeType, file_uri: file.uri } },
@@ -382,13 +394,14 @@ async function eseguiLavoro(l, audio, signal) {
           maxOutputTokens: m.outputMax || undefined,
           temperature: 0.1,
           signal,
-          onText: (t) => { infoPasso('trascrivi', `${parole(t)} parole`); anteprima(t); },
+          onText: (t) => { if (!t) return; fermaTimer(); infoPasso('trascrivi', `${parole(t)} parole`); anteprima(t); },
         }));
         l.trascrizione = r.testo.trim();
         l.trascrizioneTroncata = r.troncato;
         l.modelloTrascrizione = r.modello;
         break;
       } catch (e) {
+        fermaTimer();
         if (erroreFormato(e) && audio && tentativo < mimes.length - 1) {
           eliminaFile(chiave, file.name);
           file = null;
@@ -408,15 +421,16 @@ async function eseguiLavoro(l, audio, signal) {
 
   passo('carica', 'fatto');
   passo('trascrivi', 'fatto', `${parole(l.trascrizione)} parole`);
-  passo('appunti', 'attivo', 'in attesa della risposta…');
+  passo('appunti', 'attivo');
   l.stato = 'appunti';
   await DB.salva(l);
+  const fermaTimerAppunti = attesaConTimer('appunti');
   const r = await conModelli(modelli, (m) => genera(chiave, m.id, [{ text: promptAppunti(l) }], {
     maxOutputTokens: m.outputMax || undefined,
     temperature: 0.4,
     signal,
-    onText: (t) => { infoPasso('appunti', `${parole(t)} parole`); anteprima(t); },
-  }));
+    onText: (t) => { if (!t) return; fermaTimerAppunti(); infoPasso('appunti', `${parole(t)} parole`); anteprima(t); },
+  })).finally(fermaTimerAppunti);
   l.appunti = pulisciMarkdown(r.testo);
   l.appuntiTroncati = r.troncato;
   l.modelloAppunti = r.modello;
