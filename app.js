@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '1.5.0';
+const VERSIONE = '1.6.0';
 const $ = (s) => document.querySelector(s);
 
 // ---------------------------------------------------------------------------
@@ -206,6 +206,47 @@ function inLoop(t) {
   }
   return false;
 }
+
+// Orari "[MM:SS]" o "[H:MM:SS]" che Gemini scrive all'inizio dei paragrafi.
+const RE_ORARIO = /\[(?:(\d{1,2}):)?(\d{1,3}):(\d{2})\]/g;
+const secondiDa = (h, m, s) => (+(h || 0)) * 3600 + (+m) * 60 + (+s);
+function ultimoOrario(t) {
+  let x = null;
+  for (const m of t.matchAll(RE_ORARIO)) x = secondiDa(m[1], m[2], m[3]);
+  return x;
+}
+
+// Tiene solo i paragrafi il cui orario cade nel blocco e toglie gli orari dal testo.
+// Se Gemini ha trascritto tutta la registrazione invece del solo blocco, il resto viene scartato.
+function filtraFinestra(testo, inizio, fine) {
+  const segmenti = [];
+  let t = null;
+  let da = 0;
+  for (const m of testo.matchAll(RE_ORARIO)) {
+    if (m.index > da) segmenti.push({ t, testo: testo.slice(da, m.index) });
+    t = secondiDa(m[1], m[2], m[3]);
+    da = m.index + m[0].length;
+  }
+  segmenti.push({ t, testo: testo.slice(da) });
+  const conOrario = segmenti.filter((s) => s.t !== null);
+  if (!conOrario.length) return { testo: testo.trim(), orari: false };
+  // orari contati dall'inizio del blocco invece che del file: si spostano
+  const dentro = (x) => x >= inizio - 20 && x < fine + 5;
+  if (!conOrario.some((s) => dentro(s.t)) && Math.max(...conOrario.map((s) => s.t)) <= fine - inizio + 60) {
+    for (const s of segmenti) if (s.t !== null) s.t += inizio;
+  }
+  const primo = segmenti.find((s) => s.t !== null).t;
+  const tenuti = segmenti.filter((s) => (s.t === null ? dentro(primo) : dentro(s.t)));
+  return {
+    testo: tenuti.map((s) => s.testo.trim()).filter(Boolean).join('\n\n'),
+    orari: true,
+    scartati: segmenti.length - tenuti.length,
+  };
+}
+
+// Parole plausibili per un intervallo: un docente veloce arriva a circa 200 parole al minuto.
+const paroleMassime = (inizio, fine) => Math.round(((fine - inizio) / 60) * 220 + 150);
+const contaParole = (t) => (t.trim() ? t.trim().split(/\s+/).length : 0);
 
 // Unisce i blocchi togliendo le frasi ripetute a cavallo tra un blocco e il successivo.
 function unisciParti(parti) {
@@ -588,7 +629,10 @@ async function trascriviABlocchi(l, audio, file, chiave, modelli, signal) {
 async function trascriviBlocco(l, file, chiave, modelli, signal, inizio, fine, etichetta, profondita) {
   const finestra = { inizio, fine };
   const fermaTimer = attesaConTimer('trascrivi', etichetta);
+  const massimo = paroleMassime(inizio, fine);
   let loop = false;
+  let oltre = false;
+  let eccesso = false;
   let r;
   try {
     r = await conModelli(modelli, async (m) => {
@@ -597,6 +641,8 @@ async function trascriviBlocco(l, file, chiave, modelli, signal, inizio, fine, e
       signal.addEventListener('abort', inoltra, { once: true });
       let ultimo = '';
       loop = false;
+      oltre = false;
+      eccesso = false;
       try {
         const risposta = await generaVeloce(chiave, m.id, [
           { file_data: { mime_type: file.mimeType, file_uri: file.uri } },
@@ -611,12 +657,21 @@ async function trascriviBlocco(l, file, chiave, modelli, signal, inizio, fine, e
             ultimo = t;
             infoPasso('trascrivi', `${etichetta}: ${parole(t)} parole`);
             anteprima(t);
-            if (!loop && inLoop(t)) { loop = true; interno.abort(); }
+            if (loop || oltre) return;
+            const orario = ultimoOrario(t);
+            // Gemini è andato oltre la fine del blocco: basta così, il resto lo fa il blocco successivo
+            if (orario !== null && orario > fine + 60) { oltre = true; interno.abort(); return; }
+            // troppe parole per il tempo del blocco: sta trascrivendo altro (o ripetendo)
+            if (contaParole(t) > massimo * (orario === null ? 1.5 : 4)) { oltre = true; eccesso = true; interno.abort(); return; }
+            if (inLoop(t)) { loop = true; interno.abort(); }
           },
         });
-        return loop ? { testo: ultimo, troncato: true } : risposta;
+        if (loop) return { testo: ultimo, troncato: true };
+        if (oltre) return { testo: ultimo, troncato: false };
+        return risposta;
       } catch (e) {
         if (loop && !signal.aborted) return { testo: ultimo, troncato: true };
+        if (oltre && !signal.aborted) return { testo: ultimo, troncato: false };
         throw e;
       } finally {
         signal.removeEventListener('abort', inoltra);
@@ -625,9 +680,31 @@ async function trascriviBlocco(l, file, chiave, modelli, signal, inizio, fine, e
   } finally {
     fermaTimer();
   }
-  let testo = rimuoviRipetizioni(r.testo.trim());
-  if (/^\[FINE\]\.?$/i.test(testo)) return null;
-  testo = testo.replace(/\s*\[FINE\]\.?\s*$/i, '');
+  let grezzo = r.testo.trim();
+  if (/^\[FINE\]\.?$/i.test(grezzo)) return null;
+  grezzo = grezzo.replace(/\s*\[FINE\]\.?\s*$/i, '');
+  const filtrato = filtraFinestra(grezzo, inizio, fine);
+  let testo = rimuoviRipetizioni(filtrato.testo);
+  // Senza orari non si può filtrare: se le parole sono troppe per il tempo del blocco, dividerlo non
+  // servirebbe (Gemini ignora l'intervallo) e consumerebbe quota. Si tiene una lunghezza plausibile e
+  // si segnala la lezione, che si potrà ritrascrivere.
+  if (!filtrato.orari && (eccesso || contaParole(testo) > massimo * 1.5)) {
+    const frasi = testo.match(/[^.!?…]+[.!?…]+["»”]?\s*|[^.!?…]+$/g) || [testo];
+    let tenuto = '';
+    for (const f of frasi) {
+      if (contaParole(tenuto + f) > massimo) break;
+      tenuto += f;
+    }
+    testo = tenuto.trim() || testo.split(/\s+/).slice(0, massimo).join(' ');
+    l.trascrizioneTroncata = true;
+    l.modelloTrascrizione = r.modello;
+    return testo;
+  }
+  if (filtrato.orari && !testo && !loop) {
+    // nessun paragrafo dentro il blocco: si segnala, la lezione si potrà ritrascrivere
+    l.trascrizioneTroncata = true;
+    return '';
+  }
   // troncato: si divide fino a 3 volte; in loop: una volta sola, per non consumare la quota
   if (r.troncato && fine - inizio > 240 && profondita < (loop ? 1 : 3)) {
     const meta = inizio + Math.round((fine - inizio) / 2);
@@ -686,6 +763,8 @@ async function eseguiLavoro(l, audio, signal) {
     }
     l.trascrizione = unisciParti(l.parti);
     if (!l.trascrizione) throw new Error('Gemini non ha restituito nessun testo per questa registrazione.');
+    // controllo di plausibilità: troppe parole per la durata = testo ripetuto o inventato
+    l.trascrizioneSospetta = Number.isFinite(l.durata) && contaParole(l.trascrizione) > paroleMassime(0, l.durata) * 1.2;
     const daEliminare = l.fileGemini;
     l.fileGemini = null;
     await DB.salva(l);
@@ -837,6 +916,7 @@ async function apriLezione(id) {
   const avvisi = [];
   if (l.stato === 'errore') avvisi.push(['errore', 'Non completato: ' + (l.errore || 'errore sconosciuto')]);
   if (l.trascrizioneTroncata) avvisi.push(['', 'Una parte della trascrizione è stata troncata: gli appunti potrebbero non coprire tutta la lezione. Puoi rifare la trascrizione a blocchi più piccoli.']);
+  if (l.trascrizioneSospetta) avvisi.push(['', `La trascrizione ha ${parole(l.trascrizione)} parole, troppe per ${Math.round(l.durata / 60)} minuti di lezione: probabilmente contiene parti ripetute. Conviene rifarla.`]);
   if (l.appuntiTroncati) avvisi.push(['', 'Gli appunti sono stati troncati perché troppo lunghi. Prova "Rigenera appunti".']);
   if (avvisi.length || l.stato === 'errore') {
     stato.hidden = false;
@@ -847,7 +927,7 @@ async function apriLezione(id) {
       stato.append(p);
     }
     if (l.stato === 'errore') stato.append(...pulsantiRipresa(l));
-    else if (l.trascrizioneTroncata) stato.append(...pulsantiRitrascrivi(l));
+    else if (l.trascrizioneTroncata || l.trascrizioneSospetta) stato.append(...pulsantiRitrascrivi(l));
   }
 
   mostraControllo(l);
@@ -944,8 +1024,11 @@ function pulsantiRitrascrivi(l) {
     l.trascrizione = '';
     l.parti = [];
     l.trascrizioneTroncata = false;
-    l.fileGemini = null;
-    if (f) { l.nomeFile = f.name; l.mime = f.type; l.dimensione = f.size; l.durata = undefined; }
+    l.trascrizioneSospetta = false;
+    if (f && f.name && f.name !== l.nomeFile) { // un file diverso: va rimandato e rimisurato
+      l.fileGemini = null;
+      l.nomeFile = f.name; l.mime = f.type; l.dimensione = f.size; l.durata = undefined;
+    }
     avvia(l, f || null);
   };
   input.onchange = async () => {
@@ -957,7 +1040,7 @@ function pulsantiRitrascrivi(l) {
   b.onclick = async () => {
     let audio = null;
     try { audio = await DB.leggiAudio(l.id); } catch (_) { audio = null; }
-    if (audio) riparti(audio);
+    if (audio || fileAncoraValido(l.fileGemini)) riparti(audio);
     else { toast('Scegli di nuovo la registrazione'); input.click(); }
   };
   return [b, nota, input];
@@ -970,6 +1053,13 @@ function pulsantiRipresa(l) {
   riprendi.textContent = l.trascrizione ? 'Riprendi (scrivi gli appunti)' : 'Riprendi';
   riprendi.onclick = () => avvia(l, null);
   nodi.push(riprendi);
+  // blocchi già trascritti ma forse sbagliati (es. prima di un aggiornamento): si può ripartire da zero
+  if ((l.parti || []).length || l.trascrizione) {
+    const [ricomincia, notaR, inputR] = pulsantiRitrascrivi(l);
+    ricomincia.className = 'secondario';
+    ricomincia.textContent = 'Rifai la trascrizione da capo';
+    nodi.push(document.createTextNode(' '), ricomincia, notaR, inputR);
+  }
   if (!l.trascrizione && !fileAncoraValido(l.fileGemini)) {
     const nota = document.createElement('p');
     nota.className = 'aiuto';

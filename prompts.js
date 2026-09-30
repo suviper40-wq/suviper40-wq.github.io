@@ -15,13 +15,14 @@ IMPORTANTE: la registrazione viene trascritta a blocchi. Trascrivi SOLO il blocc
 - Comincia dalla prima frase che inizia a ${orario(finestra.inizio)} o subito dopo; finisci con la frase che è in corso a ${orario(finestra.fine)}.
 - Non trascrivere nulla di ciò che viene prima o dopo: gli altri blocchi vengono trascritti separatamente.
 - Se la registrazione finisce prima di ${orario(finestra.inizio)}, rispondi soltanto [FINE].
+- Inizia OGNI paragrafo con l'orario in cui comincia, tra parentesi quadre, contato dall'inizio del file audio (es. [${orario(finestra.inizio)}], [${orario(finestra.inizio + 95)}]). Nessun altro orario nel testo.
 ` : '';
   return `Trascrivi questa registrazione di una lezione universitaria in italiano.
 ${parte}
 Regole:
 - Trascrivi in modo fedele e completo tutto ciò che dice il docente. Non riassumere e non saltare parti.
 - Includi le domande degli studenti rivolte al docente. Ometti invece le conversazioni private di sottofondo tra studenti (es. durante le pause).
-- Scrivi in italiano corretto, dividendo il testo in paragrafi. Niente timestamp, niente titoli, niente commenti tuoi.
+- Scrivi in italiano corretto, dividendo il testo in paragrafi. ${finestra ? 'Niente titoli' : 'Niente timestamp, niente titoli'}, niente commenti tuoi.
 - Correggi solo gli errori evidenti di pronuncia dei termini tecnici e dei nomi propri.
 - Se un passaggio è davvero incomprensibile, scrivi [incomprensibile].
 ${termini ? `\nTermini che compaiono nella lezione (usa questa grafia): ${termini}.\n` : ''}
