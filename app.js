@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '1.0.1';
+const VERSIONE = '1.1.0';
 const $ = (s) => document.querySelector(s);
 
 // ---------------------------------------------------------------------------
@@ -129,6 +129,103 @@ function mimeCandidati(nome, tipo) {
 }
 const erroreFormato = (e) => e instanceof GeminiError && e.status === 400 && /mime|unsupported|not supported|format/i.test(e.message);
 const fileAncoraValido = (f) => !!(f && f.uri && f.scade && Date.parse(f.scade) - Date.now() > 30 * 60 * 1000);
+
+// Durata della registrazione in secondi, letta dal browser senza decodificare tutto il file.
+function durataAudio(blob) {
+  return new Promise((ok) => {
+    const a = document.createElement('audio');
+    const url = URL.createObjectURL(blob);
+    let fatto = false;
+    const fine = (d) => {
+      if (fatto) return;
+      fatto = true;
+      URL.revokeObjectURL(url);
+      ok(Number.isFinite(d) && d > 0 ? d : NaN);
+    };
+    a.preload = 'metadata';
+    a.onloadedmetadata = () => {
+      if (a.duration === Infinity) {
+        // alcuni file non dichiarano la durata: si salta alla fine per farla calcolare
+        a.ontimeupdate = () => { a.ontimeupdate = null; fine(a.duration); };
+        a.currentTime = 1e7;
+      } else fine(a.duration);
+    };
+    a.onerror = () => fine(NaN);
+    setTimeout(() => fine(NaN), 20000);
+    a.src = url;
+  });
+}
+
+// Durata dei blocchi: abbastanza corti da stare nel limite di testo di una risposta.
+function minutiBlocco(modello) {
+  return Math.max(10, Math.min(30, Math.floor(((modello && modello.outputMax) || 8192) * 0.45 / 250)));
+}
+
+const normalizza = (t) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+// Riduce a una sola le frasi ripetute 3+ volte di fila ("grazie grazie grazie…").
+function rimuoviRipetizioni(testo, maxParole = 8) {
+  const parole = testo.split(/(\s+)/); // conserva gli spazi e gli a capo
+  const token = [];
+  for (let i = 0; i < parole.length; i += 2) token.push({ p: parole[i], sep: parole[i + 1] || '' });
+  const norm = token.map((t) => normalizza(t.p));
+  const out = [];
+  let i = 0;
+  while (i < token.length) {
+    let saltato = false;
+    for (let n = 1; n <= maxParole && !saltato; n++) {
+      const blocco = norm.slice(i, i + n);
+      if (blocco.length < n || !blocco.some(Boolean)) continue;
+      let r = 1;
+      while (norm.slice(i + r * n, i + (r + 1) * n).join('\u0000') === blocco.join('\u0000')) r++;
+      if (r >= 3) {
+        out.push(...token.slice(i, i + n));
+        i += r * n;
+        saltato = true;
+      }
+    }
+    if (!saltato) { out.push(token[i]); i++; }
+  }
+  return out.map((t) => t.p + t.sep).join('').trim();
+}
+
+// Gemini a volte si incastra ripetendo la stessa frase all'infinito: lo si riconosce dalla coda del testo.
+function inLoop(t) {
+  const coda = t.slice(-2500);
+  const parole = normalizza(coda).split(' ').filter(Boolean);
+  if (parole.length >= 80 && new Set(parole.slice(-80)).size <= 6) return true;
+  const frasi = (coda.match(/[^.!?…]+[.!?…]+/g) || []).map(normalizza).filter((f) => f.length > 12);
+  if (frasi.length >= 8) {
+    const ultima = frasi[frasi.length - 1];
+    if (frasi.slice(-12).filter((f) => f === ultima).length >= 6) return true;
+  }
+  return false;
+}
+
+// Unisce i blocchi togliendo le frasi ripetute a cavallo tra un blocco e il successivo.
+function unisciParti(parti) {
+  let out = '';
+  for (const p of parti) {
+    let t = (p.testo || '').trim();
+    if (!t) continue;
+    if (out) {
+      const coda = normalizza(out.slice(-2000));
+      let taglio = 0;
+      const re = /[^.!?…]+[.!?…]+["»”]?\s*/g;
+      let m;
+      let controllate = 0;
+      while ((m = re.exec(t)) && controllate < 6) {
+        const f = normalizza(m[0]);
+        if (f.length >= 15 && coda.includes(f)) taglio = re.lastIndex;
+        else break;
+        controllate++;
+      }
+      t = t.slice(taglio).trim();
+    }
+    if (t) out += (out ? '\n\n' : '') + t;
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // Navigazione
@@ -266,11 +363,11 @@ function passo(nome, stato, info) {
 }
 function infoPasso(nome, info) { $(`#passi [data-passo="${nome}"] [data-info]`).textContent = info; }
 // Mostra da quanto si aspetta la prima risposta di Gemini; si ferma al primo testo ricevuto.
-function attesaConTimer(nome) {
+function attesaConTimer(nome, etichetta) {
   const inizio = Date.now();
   const aggiorna = () => {
     const s = Math.floor((Date.now() - inizio) / 1000);
-    infoPasso(nome, `in attesa della risposta… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
+    infoPasso(nome, `${etichetta ? etichetta + ': ' : ''}in attesa della risposta… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
   };
   aggiorna();
   const t = setInterval(aggiorna, 1000);
@@ -306,23 +403,58 @@ async function assicuraModelli(chiave) {
   return [...(scelto ? [scelto] : []), ...riserva];
 }
 
-async function conModelli(modelli, fn) {
+// Prova i modelli in ordine. Sul limite "al minuto" aspetta e riprova lo stesso modello;
+// se la quota del giorno è finita o il modello non risponde, passa al successivo.
+async function conModelli(modelli, fn, { signal, onAttesa } = {}) {
   let ultimo;
   for (const m of modelli) {
-    try {
-      const r = await fn(m);
-      return { ...r, modello: m.id };
-    } catch (e) {
-      if (e.name === 'AbortError') throw e;
-      ultimo = e;
-      if (e instanceof GeminiError && (e.status === 429 || e.status === 404 || e.status >= 500)) {
-        toast(`${m.nome || m.id}: ${e.status === 429 ? 'quota finita' : 'non disponibile'}, provo un altro modello`);
-        continue;
+    for (let tentativo = 0; ; tentativo++) {
+      try {
+        const r = await fn(m);
+        return { ...r, modello: m.id };
+      } catch (e) {
+        if (e.name === 'AbortError') throw e;
+        ultimo = e;
+        // limite al minuto: si aspetta e si riprova; se Gemini non dice quale limite è, un solo tentativo
+        if (e instanceof GeminiError && e.status === 429 && !e.giornaliero && tentativo < (e.quotaNota ? 4 : 1)) {
+          const ms = e.quotaNota ? Math.min(Math.max(e.ritardoMs || 60000, 5000), 120000) : 15000;
+          for (let resto = Math.ceil(ms / 1000); resto > 0; resto--) {
+            if (onAttesa) onAttesa(`limite al minuto di Gemini: riprendo tra ${resto} s`);
+            await attendi(1000, signal);
+          }
+          continue;
+        }
+        if (e instanceof GeminiError && e.status >= 500 && tentativo < 1) {
+          await attendi(5000, signal);
+          continue;
+        }
+        if (e instanceof GeminiError && (e.status === 429 || e.status === 404 || e.status >= 500)) {
+          toast(`${m.nome || m.id}: ${e.status === 429 ? 'quota del giorno finita' : 'non disponibile'}, provo un altro modello`);
+          break;
+        }
+        throw e;
       }
-      throw e;
     }
   }
   throw ultimo || new Error('Nessun modello disponibile.');
+}
+
+// Per la trascrizione il "ragionamento" del modello non serve: rallenta e consuma il limite di testo.
+// Si prova a spegnerlo; se il modello non accetta l'opzione, si prova la successiva e ce lo si ricorda.
+const VARIANTI_PENSIERO = [{ thinkingBudget: 0 }, { thinkingLevel: 'minimal' }, { thinkingLevel: 'low' }, null];
+async function generaVeloce(chiave, modello, parts, opzioni) {
+  const k = 'rulcio.pensiero.' + modello;
+  for (let i = parseInt(leggiLS(k) || '0', 10) || 0; i < VARIANTI_PENSIERO.length; i++) {
+    try {
+      const r = await genera(chiave, modello, parts, { ...opzioni, thinkingConfig: VARIANTI_PENSIERO[i] || undefined });
+      scriviLS(k, String(i));
+      return r;
+    } catch (e) {
+      const ultimo = i === VARIANTI_PENSIERO.length - 1;
+      if (!ultimo && e instanceof GeminiError && e.status === 400 && /think/i.test(e.message)) continue;
+      throw e;
+    }
+  }
 }
 
 async function avvia(l, audio) {
@@ -355,6 +487,92 @@ async function avvia(l, audio) {
   }
 }
 
+async function trascriviABlocchi(l, audio, file, chiave, modelli, signal) {
+  if (l.durata === undefined || l.durata === null) {
+    infoPasso('trascrivi', 'misuro la durata della registrazione…');
+    l.durata = audio ? await durataAudio(audio) : NaN;
+    await DB.salva(l);
+  }
+  const durata = Number.isFinite(l.durata) ? l.durata : NaN;
+  const blocco = minutiBlocco(modelli[0]) * 60;
+  const totale = Number.isFinite(durata) ? Math.max(1, Math.ceil((durata - 5) / blocco)) : 0;
+  l.parti = l.parti || [];
+  let inizio = l.parti.length ? l.parti[l.parti.length - 1].fine : 0;
+
+  // Se la durata non si legge, un tetto prudente dalla dimensione del file (almeno 32 kbit/s).
+  const dimensione = (audio && audio.size) || l.dimensione || 0;
+  const tetto = dimensione ? Math.min(dimensione / 4000, 8 * 3600) : 8 * 3600;
+  for (;;) {
+    if (Number.isFinite(durata) && inizio >= durata - 5) break;
+    if (!Number.isFinite(durata) && inizio >= tetto) break;
+    let fine = inizio + blocco;
+    if (Number.isFinite(durata) && fine > durata - 60) fine = Math.ceil(durata) + 30; // niente blocchi finali minuscoli
+    const n = l.parti.length + 1;
+    const etichetta = totale ? `blocco ${n} di ${totale}` : `blocco ${n}`;
+    const testo = await trascriviBlocco(l, file, chiave, modelli, signal, inizio, fine, etichetta, 0);
+    if (testo === null) break; // la registrazione è finita
+    l.parti.push({ inizio, fine, testo });
+    await DB.salva(l);
+    inizio = fine;
+  }
+}
+
+// Trascrive un intervallo; se il testo viene troncato o Gemini va in loop, divide a metà e riprova.
+async function trascriviBlocco(l, file, chiave, modelli, signal, inizio, fine, etichetta, profondita) {
+  const finestra = { inizio, fine };
+  const fermaTimer = attesaConTimer('trascrivi', etichetta);
+  let loop = false;
+  let r;
+  try {
+    r = await conModelli(modelli, async (m) => {
+      const interno = new AbortController();
+      const inoltra = () => interno.abort();
+      signal.addEventListener('abort', inoltra, { once: true });
+      let ultimo = '';
+      loop = false;
+      try {
+        const risposta = await generaVeloce(chiave, m.id, [
+          { file_data: { mime_type: file.mimeType, file_uri: file.uri } },
+          { text: promptTrascrizione(l.termini, finestra) },
+        ], {
+          maxOutputTokens: m.outputMax || undefined,
+          temperature: 0.1,
+          signal: interno.signal,
+          onText: (t) => {
+            if (!t) return;
+            fermaTimer();
+            ultimo = t;
+            infoPasso('trascrivi', `${etichetta}: ${parole(t)} parole`);
+            anteprima(t);
+            if (!loop && inLoop(t)) { loop = true; interno.abort(); }
+          },
+        });
+        return loop ? { testo: ultimo, troncato: true } : risposta;
+      } catch (e) {
+        if (loop && !signal.aborted) return { testo: ultimo, troncato: true };
+        throw e;
+      } finally {
+        signal.removeEventListener('abort', inoltra);
+      }
+    }, { signal, onAttesa: (msg) => { fermaTimer(); infoPasso('trascrivi', `${etichetta}: ${msg}`); } });
+  } finally {
+    fermaTimer();
+  }
+  let testo = rimuoviRipetizioni(r.testo.trim());
+  if (/^\[FINE\]\.?$/i.test(testo)) return null;
+  testo = testo.replace(/\s*\[FINE\]\.?\s*$/i, '');
+  // troncato: si divide fino a 3 volte; in loop: una volta sola, per non consumare la quota
+  if (r.troncato && fine - inizio > 240 && profondita < (loop ? 1 : 3)) {
+    const meta = inizio + Math.round((fine - inizio) / 2);
+    const a = await trascriviBlocco(l, file, chiave, modelli, signal, inizio, meta, etichetta + ' (1ª metà)', profondita + 1);
+    const b = await trascriviBlocco(l, file, chiave, modelli, signal, meta, fine, etichetta + ' (2ª metà)', profondita + 1);
+    return unisciParti([{ testo: a || '' }, { testo: b || '' }]);
+  }
+  if (r.troncato) l.trascrizioneTroncata = true;
+  l.modelloTrascrizione = r.modello;
+  return testo;
+}
+
 async function eseguiLavoro(l, audio, signal) {
   const chiave = Imp.chiave;
   const modelli = await assicuraModelli(chiave);
@@ -385,24 +603,11 @@ async function eseguiLavoro(l, audio, signal) {
       passo('trascrivi', 'attivo');
       l.stato = 'trascrivi';
       await DB.salva(l);
-      const fermaTimer = attesaConTimer('trascrivi');
       try {
-        const r = await conModelli(modelli, (m) => genera(chiave, m.id, [
-          { file_data: { mime_type: file.mimeType, file_uri: file.uri } },
-          { text: promptTrascrizione(l.termini) },
-        ], {
-          maxOutputTokens: m.outputMax || undefined,
-          temperature: 0.1,
-          signal,
-          onText: (t) => { if (!t) return; fermaTimer(); infoPasso('trascrivi', `${parole(t)} parole`); anteprima(t); },
-        }));
-        l.trascrizione = r.testo.trim();
-        l.trascrizioneTroncata = r.troncato;
-        l.modelloTrascrizione = r.modello;
+        await trascriviABlocchi(l, audio, file, chiave, modelli, signal);
         break;
       } catch (e) {
-        fermaTimer();
-        if (erroreFormato(e) && audio && tentativo < mimes.length - 1) {
+        if (erroreFormato(e) && audio && tentativo < mimes.length - 1 && !(l.parti || []).length) {
           eliminaFile(chiave, file.name);
           file = null;
           l.fileGemini = null;
@@ -412,11 +617,14 @@ async function eseguiLavoro(l, audio, signal) {
         throw e;
       }
     }
+    l.trascrizione = unisciParti(l.parti);
+    if (!l.trascrizione) throw new Error('Gemini non ha restituito nessun testo per questa registrazione.');
     const daEliminare = l.fileGemini;
     l.fileGemini = null;
     await DB.salva(l);
     if (daEliminare) eliminaFile(chiave, daEliminare.name);
-    DB.eliminaAudio(l.id).catch(() => {});
+    // la copia locale dell'audio serve solo se si dovesse rifare la trascrizione
+    if (!l.trascrizioneTroncata) DB.eliminaAudio(l.id).catch(() => {});
   }
 
   passo('carica', 'fatto');
@@ -430,7 +638,7 @@ async function eseguiLavoro(l, audio, signal) {
     temperature: 0.4,
     signal,
     onText: (t) => { if (!t) return; fermaTimerAppunti(); infoPasso('appunti', `${parole(t)} parole`); anteprima(t); },
-  })).finally(fermaTimerAppunti);
+  }), { signal, onAttesa: (msg) => { fermaTimerAppunti(); infoPasso('appunti', msg); } }).finally(fermaTimerAppunti);
   l.appunti = pulisciMarkdown(r.testo);
   l.appuntiTroncati = r.troncato;
   l.modelloAppunti = r.modello;
@@ -463,7 +671,7 @@ async function apriLezione(id) {
   stato.hidden = true;
   const avvisi = [];
   if (l.stato === 'errore') avvisi.push(['errore', 'Non completato: ' + (l.errore || 'errore sconosciuto')]);
-  if (l.trascrizioneTroncata) avvisi.push(['', 'La trascrizione è stata troncata perché troppo lunga: gli appunti potrebbero non coprire la fine della lezione.']);
+  if (l.trascrizioneTroncata) avvisi.push(['', 'Una parte della trascrizione è stata troncata: gli appunti potrebbero non coprire tutta la lezione. Puoi rifare la trascrizione a blocchi più piccoli.']);
   if (l.appuntiTroncati) avvisi.push(['', 'Gli appunti sono stati troncati perché troppo lunghi. Prova "Rigenera appunti".']);
   if (avvisi.length || l.stato === 'errore') {
     stato.hidden = false;
@@ -474,16 +682,64 @@ async function apriLezione(id) {
       stato.append(p);
     }
     if (l.stato === 'errore') stato.append(...pulsantiRipresa(l));
+    else if (l.trascrizioneTroncata) stato.append(...pulsantiRitrascrivi(l));
   }
 
   const art = $('#appunti');
   if (l.appunti) {
     art.hidden = false;
-    art.innerHTML = renderAppunti(l.appunti);
+    try {
+      art.innerHTML = renderAppunti(l.appunti);
+    } catch (e) {
+      // meglio il testo semplice che una pagina bianca
+      art.textContent = '';
+      const p = document.createElement('p');
+      p.className = 'errore-testo';
+      p.textContent = 'Non riesco a impaginare gli appunti (' + e.message + '). Chiudi e riapri l\'app; intanto ecco il testo.';
+      const pre = document.createElement('pre');
+      pre.style.whiteSpace = 'pre-wrap';
+      pre.textContent = l.appunti;
+      art.append(p, pre);
+    }
   } else {
     art.hidden = true;
     art.textContent = '';
   }
+}
+
+// Rifà la trascrizione da capo (a blocchi); gli appunti attuali restano finché non ci sono i nuovi.
+function pulsantiRitrascrivi(l) {
+  const b = document.createElement('button');
+  b.className = 'primario';
+  b.textContent = 'Rifai la trascrizione';
+  const nota = document.createElement('p');
+  nota.className = 'aiuto';
+  nota.textContent = 'Se la registrazione non è più salvata nell\'app, ti verrà chiesto di sceglierla di nuovo.';
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'audio/*,video/*,.m4a,.mp3,.wav,.ogg,.opus,.aac,.flac,.mp4';
+  input.hidden = true;
+  const riparti = (f) => {
+    l.trascrizione = '';
+    l.parti = [];
+    l.trascrizioneTroncata = false;
+    l.fileGemini = null;
+    if (f) { l.nomeFile = f.name; l.mime = f.type; l.dimensione = f.size; l.durata = undefined; }
+    avvia(l, f || null);
+  };
+  input.onchange = async () => {
+    const f = input.files[0];
+    if (!f) return;
+    try { await DB.salvaAudio(l.id, f); } catch (_) { /* si userà solo il file scelto */ }
+    riparti(f);
+  };
+  b.onclick = async () => {
+    let audio = null;
+    try { audio = await DB.leggiAudio(l.id); } catch (_) { audio = null; }
+    if (audio) riparti(audio);
+    else { toast('Scegli di nuovo la registrazione'); input.click(); }
+  };
+  return [b, nota, input];
 }
 
 function pulsantiRipresa(l) {
@@ -513,6 +769,15 @@ function pulsantiRipresa(l) {
 
 $('#pdf').addEventListener('click', async () => {
   const l = await DB.leggi(lezioneAperta);
+  if (!$('#appunti').textContent.trim()) { toast('Gli appunti non sono ancora pronti'); return; }
+  if (leggiLS('rulcio.pdfSpiegato') !== '1') {
+    const d = $('#dlg-pdf');
+    d.returnValue = '';
+    d.showModal();
+    await new Promise((ok) => d.addEventListener('close', ok, { once: true }));
+    if (d.returnValue !== 'ok') return;
+    if ($('#pdf-non-mostrare').checked) scriviLS('rulcio.pdfSpiegato', '1');
+  }
   const titoloPagina = document.title;
   document.title = nomeFileSicuro(l.titolo);
   window.print();

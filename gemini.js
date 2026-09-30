@@ -5,22 +5,35 @@ const GEMINI_BASE = 'https://generativelanguage.googleapis.com';
 const CHUNK = 8 * 1024 * 1024; // stessi pezzi da 8 MB dell'SDK ufficiale
 
 class GeminiError extends Error {
-  constructor(message, { status = 0, code = '', retryable = false } = {}) {
+  constructor(message, { status = 0, code = '', retryable = false, ritardoMs = 0, giornaliero = false, quotaNota = false } = {}) {
     super(message);
     this.status = status;
     this.code = code;
     this.retryable = retryable;
+    this.ritardoMs = ritardoMs;     // quanto aspettare prima di riprovare (limite al minuto)
+    this.giornaliero = giornaliero; // quota del giorno esaurita: inutile riprovare con lo stesso modello
+    this.quotaNota = quotaNota;     // Gemini ha detto di quale limite si tratta
   }
 }
 
 async function erroreDaRisposta(res) {
   let msg = `Errore ${res.status}`;
   let code = '';
+  let ritardoMs = 0;
+  let giornaliero = false;
+  let quotaNota = false;
   try {
     const j = await res.json();
     if (j && j.error) {
       msg = j.error.message || msg;
       code = j.error.status || '';
+      const dettagli = j.error.details || [];
+      const retry = dettagli.find((d) => /RetryInfo/.test(d['@type'] || ''));
+      if (retry && retry.retryDelay) ritardoMs = Math.ceil(parseFloat(retry.retryDelay) * 1000) || 0;
+      const quota = dettagli.find((d) => /QuotaFailure/.test(d['@type'] || ''));
+      const ids = quota ? (quota.violations || []).map((v) => `${v.quotaId || ''} ${v.quotaMetric || ''}`).join(' ') : msg;
+      giornaliero = /PerDay|per day|daily/i.test(ids);
+      quotaNota = !!quota || /per (minute|day)|daily/i.test(msg);
     }
   } catch (_) { /* corpo non JSON */ }
   if (res.status === 429) {
@@ -34,6 +47,9 @@ async function erroreDaRisposta(res) {
     status: res.status,
     code,
     retryable: res.status === 429 || res.status >= 500,
+    ritardoMs,
+    giornaliero,
+    quotaNota,
   });
 }
 
@@ -144,10 +160,14 @@ async function eliminaFile(key, nome) {
 }
 
 // Genera testo in streaming: onText riceve il testo completo accumulato finora.
-async function genera(key, modello, parts, { maxOutputTokens, temperature = 0.3, onText, signal } = {}) {
+async function genera(key, modello, parts, { maxOutputTokens, temperature = 0.3, thinkingConfig, onText, signal } = {}) {
   const body = {
     contents: [{ role: 'user', parts }],
-    generationConfig: { temperature, ...(maxOutputTokens ? { maxOutputTokens } : {}) },
+    generationConfig: {
+      temperature,
+      ...(maxOutputTokens ? { maxOutputTokens } : {}),
+      ...(thinkingConfig ? { thinkingConfig } : {}),
+    },
   };
   const res = await geminiFetch(key, `/v1beta/models/${modello}:streamGenerateContent?alt=sse`, {
     method: 'POST',

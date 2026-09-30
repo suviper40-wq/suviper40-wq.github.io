@@ -1,10 +1,25 @@
 // Istruzioni inviate al modello. Sono le stesse regole di ISTRUZIONI_APPUNTI.md.
 
-function promptTrascrizione(termini) {
-  return `Trascrivi questa registrazione di una lezione universitaria in italiano.
+// Secondi -> "MM:SS" (sotto l'ora) oppure "H:MM:SS".
+function orario(sec) {
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = String(sec % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${String(m).padStart(2, '0')}:${s}`;
+}
 
+function promptTrascrizione(termini, finestra) {
+  const parte = finestra ? `
+IMPORTANTE: la registrazione viene trascritta a blocchi. Trascrivi SOLO il blocco da ${orario(finestra.inizio)} a ${orario(finestra.fine)} (dal minuto ${Math.floor(finestra.inizio / 60)} al minuto ${Math.ceil(finestra.fine / 60)}).
+- Comincia dalla prima frase che inizia a ${orario(finestra.inizio)} o subito dopo; finisci con la frase che è in corso a ${orario(finestra.fine)}.
+- Non trascrivere nulla di ciò che viene prima o dopo: gli altri blocchi vengono trascritti separatamente.
+- Se la registrazione finisce prima di ${orario(finestra.inizio)}, rispondi soltanto [FINE].
+` : '';
+  return `Trascrivi questa registrazione di una lezione universitaria in italiano.
+${parte}
 Regole:
-- Trascrivi in modo fedele e completo tutto ciò che dice il docente, dall'inizio alla fine. Non riassumere e non saltare parti.
+- Trascrivi in modo fedele e completo tutto ciò che dice il docente. Non riassumere e non saltare parti.
 - Includi le domande degli studenti rivolte al docente. Ometti invece le conversazioni private di sottofondo tra studenti (es. durante le pause).
 - Scrivi in italiano corretto, dividendo il testo in paragrafi. Niente timestamp, niente titoli, niente commenti tuoi.
 - Correggi solo gli errori evidenti di pronuncia dei termini tecnici e dei nomi propri.
