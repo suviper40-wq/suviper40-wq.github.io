@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b3d62">
+<meta name="description" content="Dalle registrazioni delle lezioni agli appunti in PDF">
+<title>Rulcio</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="vendor/katex.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="barra">
+  <button class="icona" id="indietro" aria-label="Indietro" hidden>
+    <svg viewBox="0 0 24 24" width="24" height="24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <h1 id="titolo-barra">Rulcio</h1>
+  <button class="icona" id="apri-impostazioni" aria-label="Impostazioni">
+    <svg viewBox="0 0 24 24" width="24" height="24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7.4 7.4 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1c.5.4 1.1.8 1.7 1l.4 2.5h4l.4-2.5c.6-.2 1.2-.6 1.7-1l2.4 1 2-3.4-2-1.6Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+  </button>
+</header>
+
+<main id="app">
+  <!-- HOME -->
+  <section id="v-home" class="vista">
+    <div id="benvenuto" class="card evidenza" hidden>
+      <h2>Per iniziare</h2>
+      <p>Rulcio usa <b>Gemini</b> di Google, gratis con una chiave personale. Serve solo la prima volta.</p>
+      <button class="primario" data-vai="impostazioni">Inserisci la chiave</button>
+    </div>
+
+    <div class="card">
+      <h2>Nuova lezione</h2>
+      <label class="file-scelta" id="etichetta-file">
+        <input type="file" id="audio" accept="audio/*,video/*,.m4a,.mp3,.wav,.ogg,.opus,.aac,.flac,.mp4">
+        <span class="file-icona" aria-hidden="true">🎙️</span>
+        <span id="nome-file">Scegli la registrazione</span>
+      </label>
+      <label>Titolo <span class="facolt">(facoltativo)</span>
+        <input type="text" id="titolo" placeholder="es. Fisiologia – fluorescenza" autocomplete="off">
+      </label>
+      <div class="riga2">
+        <label>Materia <span class="facolt">(facolt.)</span>
+          <input type="text" id="materia" list="materie" autocomplete="off">
+          <datalist id="materie"></datalist>
+        </label>
+        <label>Data
+          <input type="date" id="data">
+        </label>
+      </div>
+      <label>Termini tecnici <span class="facolt">(facoltativo)</span>
+        <textarea id="termini" rows="2" placeholder="es. fluoroforo, FRET, bromuro di etidio"></textarea>
+      </label>
+      <p class="aiuto">Parole difficili della lezione (nomi, sigle, autori): aiutano a scriverle giuste.</p>
+      <button class="primario grande" id="crea">Crea gli appunti</button>
+      <button class="link" id="apri-testo">Ho già la trascrizione</button>
+      <div id="da-testo" hidden>
+        <label>Incolla la trascrizione oppure scegli un file .txt
+          <textarea id="testo-trascrizione" rows="6"></textarea>
+        </label>
+        <input type="file" id="file-testo" accept=".txt,text/plain">
+        <button class="primario" id="crea-da-testo">Crea gli appunti dal testo</button>
+      </div>
+    </div>
+
+    <div class="card" id="archivio-card">
+      <h2>Le tue lezioni</h2>
+      <ul id="archivio" class="archivio"></ul>
+      <p id="archivio-vuoto" class="aiuto">Qui compariranno gli appunti che crei. Restano salvati su questo telefono.</p>
+    </div>
+  </section>
+
+  <!-- LAVORO IN CORSO -->
+  <section id="v-lavoro" class="vista" hidden>
+    <div class="card">
+      <h2 id="lavoro-titolo">Sto lavorando…</h2>
+      <ol class="passi" id="passi">
+        <li data-passo="carica"><span class="pallino"></span><div><b>Invio della registrazione</b><small data-info></small></div></li>
+        <li data-passo="trascrivi"><span class="pallino"></span><div><b>Trascrizione</b><small data-info></small></div></li>
+        <li data-passo="appunti"><span class="pallino"></span><div><b>Scrittura degli appunti</b><small data-info></small></div></li>
+      </ol>
+      <p class="avviso">Tieni l'app aperta e lo schermo acceso finché non ha finito: se passi a un'altra app il telefono potrebbe interrompere il lavoro (potrai comunque riprenderlo).</p>
+      <details id="anteprima-box"><summary>Anteprima</summary><pre id="anteprima"></pre></details>
+      <button class="secondario" id="annulla">Annulla</button>
+    </div>
+  </section>
+
+  <!-- LEZIONE -->
+  <section id="v-lezione" class="vista" hidden>
+    <div class="azioni" id="azioni-lezione">
+      <button class="primario" id="pdf">Salva PDF</button>
+      <button class="secondario" id="scarica-md">Scarica .md</button>
+      <button class="secondario" id="scarica-txt">Trascrizione</button>
+      <button class="secondario" id="rigenera">Rigenera</button>
+      <button class="pericolo" id="elimina">Elimina</button>
+    </div>
+    <div id="lezione-stato" class="card" hidden></div>
+    <article id="appunti" class="appunti"></article>
+  </section>
+
+  <!-- IMPOSTAZIONI -->
+  <section id="v-impostazioni" class="vista" hidden>
+    <div class="card">
+      <h2>Chiave Gemini</h2>
+      <ol class="istruzioni">
+        <li>Apri <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> e accedi con il tuo account Google.</li>
+        <li>Tocca <b>Create API key</b> (crea chiave API) e copiala.</li>
+        <li>Incollala qui sotto e tocca <b>Verifica</b>.</li>
+      </ol>
+      <label>Chiave API
+        <input type="password" id="chiave" autocomplete="off" spellcheck="false" placeholder="AIza…">
+      </label>
+      <button class="primario" id="verifica">Verifica e salva</button>
+      <p id="esito-chiave" class="aiuto"></p>
+      <p class="aiuto">La chiave resta salvata solo su questo telefono e viene inviata solo a Google.</p>
+    </div>
+    <div class="card">
+      <h2>Modello</h2>
+      <label>Modello usato
+        <select id="modello"><option value="">Automatico (consigliato)</option></select>
+      </label>
+      <p class="aiuto">In automatico l'app usa il Gemini Flash più recente e, se la quota gratuita è finita, passa da sola a un altro modello (per esempio Flash-Lite, con una quota giornaliera più ampia).</p>
+    </div>
+    <div class="card">
+      <h2>Da sapere</h2>
+      <p class="aiuto">Con il piano gratuito Google può usare i contenuti inviati (registrazioni e testi) per migliorare i suoi servizi. I limiti gratuiti cambiano nel tempo: se compare un errore di quota, riprova il giorno dopo o scegli un altro modello.</p>
+      <p class="aiuto" id="versione"></p>
+    </div>
+  </section>
+</main>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="vendor/marked.umd.js"></script>
+<script src="vendor/purify.min.js"></script>
+<script src="vendor/katex.min.js"></script>
+<script src="prompts.js"></script>
+<script src="gemini.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
