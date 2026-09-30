@@ -132,6 +132,20 @@
   </section>
 </main>
 
+<dialog id="dlg-pdf">
+  <form method="dialog">
+    <h2>Salvare il PDF</h2>
+    <p>Si apre la schermata di <b>stampa</b> del telefono: è normale.</p>
+    <p><b>Android:</b> in alto tocca la stampante e scegli <b>Salva come PDF</b>, poi premi il pulsante <b>PDF</b> e scegli dove salvarlo.</p>
+    <p><b>iPhone:</b> nella schermata di stampa tocca <b>Condividi</b> (quadrato con la freccia) e poi <b>Salva su File</b>.</p>
+    <label class="spunta"><input type="checkbox" id="pdf-non-mostrare"> Ho capito, non mostrarlo più</label>
+    <div class="riga-pulsanti">
+      <button class="secondario" value="annulla">Annulla</button>
+      <button class="primario" value="ok">Continua</button>
+    </div>
+  </form>
+</dialog>
+
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script src="vendor/marked.umd.js"></script>
