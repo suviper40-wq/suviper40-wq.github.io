@@ -28,7 +28,16 @@ ${termini ? `\nTermini che compaiono nella lezione (usa questa grafia): ${termin
 Rispondi solo con la trascrizione.`;
 }
 
-function promptAppunti({ titolo, materia, data, termini, trascrizione, durata }) {
+const ISTRUZIONI_SLIDE = `
+SLIDE DEL DOCENTE
+Insieme a questo messaggio ci sono le slide della lezione (PDF). Il docente ha detto che fanno fede. Usale così:
+- per la grafia corretta di termini, sigle, nomi e formule, e per i valori numerici quando la trascrizione è confusa o incompleta;
+- per completare gli argomenti trattati a lezione con ciò che è scritto sulle slide (definizioni, tabelle, dati): i contenuti delle slide contano come detti dal docente;
+- ignora le slide su argomenti di cui il docente non ha parlato a lezione;
+- se trascrizione e slide non coincidono, riporta la versione delle slide e segnala la differenza con una *(nota: ...)*.
+`;
+
+function promptAppunti({ titolo, materia, data, termini, trascrizione, durata }, conSlide) {
   const parole = (trascrizione || '').trim().split(/\s+/).length;
   const minuti = Number.isFinite(durata) && durata > 0 ? Math.round(durata / 60) : Math.round(parole / 110);
   const obiettivo = Math.max(1500, Math.round(Math.max(minuti * 30, parole * 0.3) / 100) * 100);
@@ -42,7 +51,7 @@ COMPLETEZZA: APPUNTI, NON UN RIASSUNTO
 - FEDELTÀ: ogni affermazione deve trovare riscontro nella trascrizione. Non aggiungere dettagli, aggettivi, numeri, date, nomi o esempi che il docente non ha detto, anche se ti sembrano plausibili o utili.
 - Non correggere mai in silenzio: se un dato del docente ti sembra sbagliato, riporta il suo e aggiungi la correzione in una *(nota: ...)*.
 - Solo se un passaggio detto dal docente non si capisce senza un'informazione che lui non ha dato, puoi aggiungerla in modo breve (1-2 frasi) come *(approfondimento: ...)*. Mai approfondimenti su argomenti che il docente non ha trattato.
-
+${conSlide ? ISTRUZIONI_SLIDE : ''}
 STILE: DISCORSIVO, NON A ELENCHI PUNTATI
 - Scrivi in prosa, con paragrafi che spiegano e collegano i concetti, come un buon libro di testo o degli appunti ben scritti. Mantieni il ragionamento del docente (perché, come, cosa ne consegue), non ridurlo a parole chiave.
 - NON usare elenchi puntati, a meno che il contenuto sia davvero un elenco di cose parallele (es. i passaggi di un procedimento). Nel dubbio, scrivi in prosa.
@@ -77,9 +86,11 @@ TRASCRIZIONE
 ${trascrizione}`;
 }
 
-function promptControllo({ trascrizione, appunti }) {
+function promptControllo({ trascrizione, appunti }, conSlide) {
   return `Sei un revisore scientifico molto attento. Ti do la TRASCRIZIONE di una lezione universitaria e gli APPUNTI scritti a partire da essa. Gli appunti devono contenere SOLO ciò che ha detto il docente. Confrontali con la trascrizione, frase per frase, e correggi:
-
+${conSlide ? `
+SLIDE: insieme a questo messaggio ci sono le slide del docente (PDF), che per il docente fanno fede. Ciò che è scritto sulle slide, se riguarda argomenti trattati a lezione, è ammesso negli appunti come se l'avesse detto il docente (non va tolto). Usa le slide anche per verificare numeri, sigle e termini: se trascrizione e slide non coincidono, vale la slide, con una *(nota: ...)* sulla differenza.
+` : ''}
 1. CONTENUTI NON DETTI DAL DOCENTE: frasi, dettagli, meccanismi, nomi, formule, esempi o valori numerici che nella trascrizione non ci sono (anche se scientificamente corretti, "da libro di testo").
    - Di regola vanno TOLTI, oppure la frase va riscritta tenendo solo la parte detta dal docente.
    - ECCEZIONE, i buchi: se togliendoli un passaggio che il docente ha spiegato diventerebbe incomprensibile o monco, sostituiscili con un approfondimento BREVE (al massimo 1-2 frasi) scritto così: *(approfondimento: ...)*. Solo per colmare un buco, mai per aggiungere argomenti.
