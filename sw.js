@@ -1,6 +1,6 @@
 // Tiene in cache i file dell'app, così si apre subito anche con poca rete.
 // Le chiamate a Gemini non passano di qui.
-const CACHE = 'rulcio-v8';
+const CACHE = 'rulcio-v9';
 const FILE = [
   './', 'index.html', 'style.css', 'app.js', 'gemini.js', 'prompts.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',

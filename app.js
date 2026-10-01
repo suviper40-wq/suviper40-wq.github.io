@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '1.7.0';
+const VERSIONE = '1.7.1';
 const $ = (s) => document.querySelector(s);
 
 // ---------------------------------------------------------------------------
@@ -494,6 +494,7 @@ async function assicuraModelli(chiave) {
 const MSG_QUOTA = 'La quota gratuita di oggi di Gemini è finita. Riprova domani dopo le 9 (ora italiana): il lavoro fatto finora resta salvato.';
 const MSG_QUOTA_FLASH = 'La quota gratuita di oggi di Gemini Flash è finita (Flash-Lite non si usa per trascrivere: sbaglia troppo). Riprova domani dopo le 9 (ora italiana): il lavoro fatto finora resta salvato.';
 const nomeModello = (m) => (m.nome || m.id).replace(/^Gemini\s+/i, 'Gemini ');
+const nomeModelloId = (id) => { const m = Imp.modelli.find((x) => x.id === id); return m ? nomeModello(m) : id; };
 
 // Prova i modelli in ordine. Sul limite "al minuto" aspetta e riprova lo stesso modello;
 // se la quota del giorno è finita o il modello non risponde, passa al successivo.
@@ -520,9 +521,10 @@ async function conModelli(modelli, fn, { signal, onAttesa } = {}) {
           await attendi(5000, signal);
           continue;
         }
-        if (e instanceof GeminiError && e.status === 429) segnaEsaurito(m.id);
+        // solo la quota del giorno vale fino a domani; il limite al minuto si salta solo per questa richiesta
+        if (e instanceof GeminiError && e.status === 429 && e.giornaliero) segnaEsaurito(m.id);
         if (e instanceof GeminiError && (e.status === 429 || e.status === 404 || e.status >= 500)) {
-          toast(`${m.nome || m.id}: ${e.status === 429 ? 'quota del giorno finita' : 'non disponibile'}, provo un altro modello`);
+          toast(`${m.nome || m.id}: ${e.status === 429 ? (e.giornaliero ? 'quota del giorno finita' : 'troppe richieste in questo momento') : 'non disponibile'}, provo un altro modello`);
           break;
         }
         throw e;
@@ -928,6 +930,7 @@ async function apriLezione(id) {
   if (l.stato === 'errore') avvisi.push(['errore', 'Non completato: ' + (l.errore || 'errore sconosciuto')]);
   if (l.trascrizioneTroncata) avvisi.push(['', 'Una parte della trascrizione è stata troncata: gli appunti potrebbero non coprire tutta la lezione. Puoi rifare la trascrizione a blocchi più piccoli.']);
   if (l.trascrizioneSospetta) avvisi.push(['', `La trascrizione ha ${parole(l.trascrizione)} parole, troppe per ${Math.round(l.durata / 60)} minuti di lezione: probabilmente contiene parti ripetute. Conviene rifarla.`]);
+  if (l.appunti && /lite/.test(l.modelloAppunti || '')) avvisi.push(['', `Gli appunti sono stati scritti da ${nomeModelloId(l.modelloAppunti)} perché Pro e Flash non erano disponibili: di solito sono più corti e meno precisi. Conviene premere "Rigenera appunti" più tardi o domani dopo le 9.`]);
   if (l.appuntiTroncati) avvisi.push(['', 'Gli appunti sono stati troncati perché troppo lunghi. Prova "Rigenera appunti".']);
   if (avvisi.length || l.stato === 'errore') {
     stato.hidden = false;
@@ -941,6 +944,10 @@ async function apriLezione(id) {
     else if (l.trascrizioneTroncata || l.trascrizioneSospetta) stato.append(...pulsantiRitrascrivi(l));
   }
 
+  const usati = [['trascrizione', l.modelloTrascrizione], ['appunti', l.modelloAppunti], ['controllo', l.controllo && l.controllo.modello]]
+    .filter(([, id]) => id).map(([passo, id]) => `${passo}: ${nomeModelloId(id)}`);
+  $('#lezione-modelli').textContent = usati.length ? 'Modelli usati · ' + usati.join(' · ') : '';
+  $('#lezione-modelli').hidden = !usati.length;
   mostraControllo(l);
   mostraSlide(l);
   const art = $('#appunti');

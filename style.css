@@ -166,7 +166,7 @@ dialog p { margin: 8px 0; font-size: 15px; }
 @media print {
   @page { size: A4; margin: 16mm 15mm; }
   body { background: #fff; }
-  .barra, #toast, dialog, .vista:not(#v-lezione), .azioni, #lezione-stato, #controllo-box, #slide-box { display: none !important; }
+  .barra, #toast, dialog, .vista:not(#v-lezione), .azioni, #lezione-stato, #lezione-modelli, #controllo-box, #slide-box { display: none !important; }
   main { padding: 0; max-width: none; }
   .appunti { border: 0; padding: 0; border-radius: 0; font-size: 10.5pt; line-height: 1.45; }
   .appunti p { text-align: justify; hyphens: auto; }
