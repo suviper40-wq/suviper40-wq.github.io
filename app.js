@@ -460,6 +460,14 @@ async function tieniSchermoAcceso() {
 const giornoQuota = () => new Date(Date.now() - 8 * 3600e3).toISOString().slice(0, 10);
 const esaurito = (m) => leggiLS('rulcio.esaurito.' + m.id) === giornoQuota();
 const segnaEsaurito = (id) => scriviLS('rulcio.esaurito.' + id, giornoQuota());
+// Fino alla 1.7.0 anche il limite al minuto segnava il modello come esaurito per tutto il giorno:
+// all'aggiornamento si cancellano quei segni (una quota davvero finita si riconosce alla prima richiesta).
+try {
+  if (leggiLS('rulcio.esauritiPuliti') !== '1.7.1') {
+    Object.keys(localStorage).filter((k) => k.startsWith('rulcio.esaurito.')).forEach((k) => localStorage.removeItem(k));
+    scriviLS('rulcio.esauritiPuliti', '1.7.1');
+  }
+} catch (_) { /* localStorage non disponibile */ }
 
 // Un elenco di modelli per ogni compito. La trascrizione usa Flash (basta, e ha più quota);
 // gli appunti provano prima Pro, che scrive meglio, e ne consumano una sola richiesta per lezione.
