@@ -73,14 +73,14 @@ async function elencaModelli(key) {
       inputMax: m.inputTokenLimit || 0,
       outputMax: m.outputTokenLimit || 0,
     }))
-    .filter((m) => /^gemini/.test(m.id) && /flash|pro/.test(m.id))
+    .filter((m) => /^gemini/.test(m.id) && /flash/.test(m.id))
     .filter((m) => !/tts|image|embedding|live|native-audio|robotics|computer-use|learnlm/.test(m.id));
 }
 
 // Ordina i modelli dal più adatto: prima i "flash" (buona qualità e quota gratuita più ampia),
-// poi i "flash-lite" (quota più alta, qualità minore), infine i "pro".
+// poi i "flash-lite" (quota più alta, qualità minore).
 function ordinaModelli(modelli) {
-  const famiglia = (id) => (/flash-lite/.test(id) ? 1 : /flash/.test(id) ? 0 : 2);
+  const famiglia = (id) => (/flash-lite/.test(id) ? 1 : 0);
   const versione = (id) => {
     if (/latest/.test(id)) return 999;
     const m = id.match(/gemini-(\d+(?:\.\d+)?)/);
@@ -160,14 +160,13 @@ async function eliminaFile(key, nome) {
 }
 
 // Genera testo in streaming: onText riceve il testo completo accumulato finora.
-async function genera(key, modello, parts, { maxOutputTokens, temperature = 0.3, thinkingConfig, extraConfig, onText, signal } = {}) {
+async function genera(key, modello, parts, { maxOutputTokens, temperature = 0.3, thinkingConfig, onText, signal } = {}) {
   const body = {
     contents: [{ role: 'user', parts }],
     generationConfig: {
       temperature,
       ...(maxOutputTokens ? { maxOutputTokens } : {}),
       ...(thinkingConfig ? { thinkingConfig } : {}),
-      ...(extraConfig || {}),
     },
   };
   const res = await geminiFetch(key, `/v1beta/models/${modello}:streamGenerateContent?alt=sse`, {

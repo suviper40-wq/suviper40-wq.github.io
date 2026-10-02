@@ -29,16 +29,7 @@ ${termini ? `\nTermini che compaiono nella lezione (usa questa grafia): ${termin
 Rispondi solo con la trascrizione.`;
 }
 
-const ISTRUZIONI_SLIDE = `
-SLIDE DEL DOCENTE
-Insieme a questo messaggio ci sono le slide della lezione (PDF). Il docente ha detto che fanno fede. Usale così:
-- per la grafia corretta di termini, sigle, nomi e formule, e per i valori numerici quando la trascrizione è confusa o incompleta;
-- per completare gli argomenti trattati a lezione con ciò che è scritto sulle slide (definizioni, tabelle, dati): i contenuti delle slide contano come detti dal docente;
-- ignora le slide su argomenti di cui il docente non ha parlato a lezione;
-- se trascrizione e slide non coincidono, riporta la versione delle slide e segnala la differenza con una *(nota: ...)*.
-`;
-
-function promptAppunti({ titolo, materia, data, termini, trascrizione, durata }, conSlide) {
+function promptAppunti({ titolo, materia, data, termini, trascrizione, durata }) {
   const parole = (trascrizione || '').trim().split(/\s+/).length;
   const minuti = Number.isFinite(durata) && durata > 0 ? Math.round(durata / 60) : Math.round(parole / 110);
   const obiettivo = Math.max(1500, Math.round(Math.max(minuti * 30, parole * 0.3) / 100) * 100);
@@ -52,7 +43,6 @@ COMPLETEZZA: APPUNTI, NON UN RIASSUNTO
 - FEDELTÀ: ogni affermazione deve trovare riscontro nella trascrizione. Non aggiungere dettagli, aggettivi, numeri, date, nomi o esempi che il docente non ha detto, anche se ti sembrano plausibili o utili.
 - Non correggere mai in silenzio: se un dato del docente ti sembra sbagliato, riporta il suo e aggiungi la correzione in una *(nota: ...)*.
 - Solo se un passaggio detto dal docente non si capisce senza un'informazione che lui non ha dato, puoi aggiungerla in modo breve (1-2 frasi) come *(approfondimento: ...)*. Mai approfondimenti su argomenti che il docente non ha trattato.
-${conSlide ? ISTRUZIONI_SLIDE : ''}
 STILE: DISCORSIVO, NON A ELENCHI PUNTATI
 - Scrivi in prosa, con paragrafi che spiegano e collegano i concetti, come un buon libro di testo o degli appunti ben scritti. Mantieni il ragionamento del docente (perché, come, cosa ne consegue), non ridurlo a parole chiave.
 - NON usare elenchi puntati, a meno che il contenuto sia davvero un elenco di cose parallele (es. i passaggi di un procedimento). Nel dubbio, scrivi in prosa.
@@ -85,35 +75,4 @@ Termini tecnici indicati: ${termini || '(nessuno)'}
 
 TRASCRIZIONE
 ${trascrizione}`;
-}
-
-function promptControllo({ trascrizione, appunti }, conSlide) {
-  return `Sei un revisore scientifico molto attento. Ti do la TRASCRIZIONE di una lezione universitaria e gli APPUNTI scritti a partire da essa. Gli appunti devono contenere SOLO ciò che ha detto il docente. Confrontali con la trascrizione, frase per frase, e correggi:
-${conSlide ? `
-SLIDE: insieme a questo messaggio ci sono le slide del docente (PDF), che per il docente fanno fede. Ciò che è scritto sulle slide, se riguarda argomenti trattati a lezione, è ammesso negli appunti come se l'avesse detto il docente (non va tolto). Usa le slide anche per verificare numeri, sigle e termini: se trascrizione e slide non coincidono, vale la slide, con una *(nota: ...)* sulla differenza.
-` : ''}
-1. CONTENUTI NON DETTI DAL DOCENTE: frasi, dettagli, meccanismi, nomi, formule, esempi o valori numerici che nella trascrizione non ci sono (anche se scientificamente corretti, "da libro di testo").
-   - Di regola vanno TOLTI, oppure la frase va riscritta tenendo solo la parte detta dal docente.
-   - ECCEZIONE, i buchi: se togliendoli un passaggio che il docente ha spiegato diventerebbe incomprensibile o monco, sostituiscili con un approfondimento BREVE (al massimo 1-2 frasi) scritto così: *(approfondimento: ...)*. Solo per colmare un buco, mai per aggiungere argomenti.
-   - Gli approfondimenti già presenti e scritti così vanno bene se brevi e necessari; altrimenti accorciali o toglili.
-2. Valori numerici, unità di misura, nomi e sigle diversi da quelli detti dal docente: riportali come nella trascrizione (salvo evidenti errori di trascrizione dell'audio).
-3. Errori o imprecisioni del docente riportati senza segnalazione, o corretti in silenzio: riporta ciò che ha detto e aggiungi subito dopo una *(nota: ...)* con la correzione.
-4. Punti che il docente ha detto di chiedere all'esame e che negli appunti non sono segnati con ⚠️: aggiungi ⚠️ all'inizio della frase.
-5. Informazioni pratiche (esame, materiale, argomenti esclusi, modalità delle prove) non presenti nella trascrizione: vanno tolte.
-6. Schemi disegnati con caratteri di testo o blocchi di codice (\`\`\`): sostituiscili con una breve descrizione a parole.
-
-Non cambiare lo stile, non riassumere ciò che il docente ha detto e non toccare ciò che è corretto e presente nella trascrizione.
-
-Rispondi SOLO con un oggetto JSON di questa forma:
-{"correzioni":[{"trova":"...","sostituisci":"...","motivo":"..."}]}
-- "trova": un pezzo di testo copiato ESATTAMENTE dagli appunti (stesse parole, punteggiatura e simboli Markdown), unico; può essere una parte di frase, una frase, una voce di elenco o un paragrafo intero se è tutto da togliere. Mai un titolo.
-- "sostituisci": il testo che deve prenderne il posto (stringa vuota per eliminarlo).
-- "motivo": breve spiegazione in italiano (es. "non detto dal docente", "approfondimento per colmare un buco", "il docente ha detto 450 nm").
-- Al massimo 80 correzioni: dai la precedenza ai contenuti non detti più lunghi. Se non c'è niente da correggere rispondi {"correzioni":[]}.
-
-TRASCRIZIONE
-${trascrizione}
-
-APPUNTI
-${appunti}`;
 }
