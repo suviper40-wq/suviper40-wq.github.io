@@ -55,10 +55,6 @@
         <textarea id="termini" rows="2" placeholder="es. fluoroforo, FRET, bromuro di etidio"></textarea>
       </label>
       <p class="aiuto">Parole difficili della lezione (nomi, sigle, autori): aiutano a scriverle giuste.</p>
-      <label>Slide della lezione <span class="facolt">(PDF, facoltativo)</span>
-        <input type="file" id="slide" accept="application/pdf,.pdf">
-      </label>
-      <p class="aiuto">Se le hai, Gemini le usa per scrivere giusti termini, numeri e formule e per completare gli argomenti spiegati.</p>
       <button class="primario grande" id="crea">Crea gli appunti</button>
       <button class="link" id="apri-testo">Ho già la trascrizione</button>
       <div id="da-testo" hidden>
@@ -85,7 +81,6 @@
         <li data-passo="carica"><span class="pallino"></span><div><b>Invio della registrazione</b><small data-info></small></div></li>
         <li data-passo="trascrivi"><span class="pallino"></span><div><b>Trascrizione</b><small data-info></small></div></li>
         <li data-passo="appunti"><span class="pallino"></span><div><b>Scrittura degli appunti</b><small data-info></small></div></li>
-        <li data-passo="controllo"><span class="pallino"></span><div><b>Controllo degli appunti</b><small data-info></small></div></li>
       </ol>
       <p class="avviso">Tieni l'app aperta e lo schermo acceso finché non ha finito: se passi a un'altra app il telefono potrebbe interrompere il lavoro (potrai comunque riprenderlo).</p>
       <details id="anteprima-box"><summary>Anteprima</summary><pre id="anteprima"></pre></details>
@@ -104,12 +99,6 @@
     </div>
     <div id="lezione-stato" class="card" hidden></div>
     <p id="lezione-modelli" class="aiuto" hidden></p>
-    <div id="slide-box" class="card riga-slide" hidden>
-      <span id="slide-stato"></span>
-      <button class="secondario" id="slide-cambia">Aggiungi slide (PDF)</button>
-      <input type="file" id="slide-lezione" accept="application/pdf,.pdf" hidden>
-    </div>
-    <details id="controllo-box" class="card" hidden><summary id="controllo-titolo"></summary><div id="controllo-elenco"></div></details>
     <article id="appunti" class="appunti"></article>
   </section>
 
@@ -134,7 +123,7 @@
       <label>Modello preferito per gli appunti
         <select id="modello"><option value="">Automatico (consigliato)</option></select>
       </label>
-      <p class="aiuto">In automatico la trascrizione usa Gemini Flash, mentre gli appunti provano prima Gemini Pro, che scrive meglio (una sola richiesta Pro per lezione). Un secondo passaggio (Pro se disponibile) confronta gli appunti con la trascrizione e toglie ciò che il docente non ha detto, lasciando solo brevi approfondimenti dove servono a capire. Se la quota gratuita di un modello finisce, l'app passa da sola a un altro fino al giorno dopo.</p>
+      <p class="aiuto">In automatico sia la trascrizione sia gli appunti usano Gemini Flash. Se la quota gratuita di un modello finisce, l'app passa da sola a un altro fino al giorno dopo.</p>
     </div>
     <div class="card">
       <h2>Da sapere</h2>
