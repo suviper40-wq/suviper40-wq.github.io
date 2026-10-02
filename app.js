@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '1.7.1';
+const VERSIONE = '1.8.0';
 const $ = (s) => document.querySelector(s);
 
 // ---------------------------------------------------------------------------
@@ -10,12 +10,13 @@ function leggiLS(k) { try { return localStorage.getItem(k); } catch (_) { return
 function scriviLS(k, v) {
   try { if (v == null || v === '') localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (_) { /* memoria non disponibile */ }
 }
+const ePro = (id) => /pro/.test(id) && !/flash/.test(id);
 const Imp = {
   get chiave() { return leggiLS('rulcio.chiave') || ''; },
   set chiave(v) { scriviLS('rulcio.chiave', v); },
   get modello() { return leggiLS('rulcio.modello') || ''; },
   set modello(v) { scriviLS('rulcio.modello', v); },
-  get modelli() { try { return JSON.parse(leggiLS('rulcio.modelli') || '[]'); } catch (_) { return []; } },
+  get modelli() { try { return JSON.parse(leggiLS('rulcio.modelli') || '[]').filter((m) => !ePro(m.id)); } catch (_) { return []; } },
   set modelli(v) { scriviLS('rulcio.modelli', JSON.stringify(v)); },
 };
 
@@ -28,7 +29,6 @@ const DB = (() => {
       const db = r.result;
       if (!db.objectStoreNames.contains('lezioni')) db.createObjectStore('lezioni', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('audio')) db.createObjectStore('audio');
-      if (!db.objectStoreNames.contains('slide')) db.createObjectStore('slide');
     };
     r.onsuccess = () => ok(r.result);
     r.onerror = () => no(r.error);
@@ -42,10 +42,7 @@ const DB = (() => {
     elimina: async (id) => {
       await req((await store('lezioni', 'readwrite')).delete(id));
       await req((await store('audio', 'readwrite')).delete(id));
-      await req((await store('slide', 'readwrite')).delete(id));
     },
-    salvaSlide: async (id, blob) => req((await store('slide', 'readwrite')).put(blob, id)),
-    leggiSlide: async (id) => req((await store('slide')).get(id)),
     salvaAudio: async (id, blob) => req((await store('audio', 'readwrite')).put(blob, id)),
     leggiAudio: async (id) => req((await store('audio')).get(id)),
     eliminaAudio: async (id) => req((await store('audio', 'readwrite')).delete(id)),
@@ -357,38 +354,18 @@ function svuotaModulo() {
   for (const id of ['#titolo', '#termini', '#testo-trascrizione']) $(id).value = '';
   $('#audio').value = '';
   $('#file-testo').value = '';
-  $('#slide').value = '';
   $('#audio').dispatchEvent(new Event('change'));
-}
-
-// Slide facoltative (PDF): restano sul telefono e vengono mandate a Gemini solo per gli appunti.
-const MAX_SLIDE = 50 * 1024 * 1024;
-function slideValide(f) {
-  if (!f) return null;
-  if (!/pdf$/i.test(f.type) && !/\.pdf$/i.test(f.name)) { toast('Le slide devono essere un PDF (esportale in PDF da PowerPoint)'); return false; }
-  if (f.size > MAX_SLIDE) { toast('Il PDF delle slide supera 50 MB: non verrà usato'); return false; }
-  return f;
-}
-async function allegaSlide(l, f) {
-  try {
-    await DB.salvaSlide(l.id, f);
-    l.nomeSlide = f.name;
-    l.fileSlide = null;
-  } catch (_) { toast('Non riesco a salvare le slide sul telefono'); }
 }
 
 $('#crea').addEventListener('click', async () => {
   if (!Imp.chiave) { toast('Prima inserisci la chiave Gemini'); vai('impostazioni'); return; }
   const f = $('#audio').files[0];
   if (!f) { toast('Scegli prima la registrazione'); return; }
-  const s = slideValide($('#slide').files[0]);
-  if (s === false) return;
   const l = {
     id: nuovoId(), creata: new Date().toISOString(), ...leggiModulo(),
     nomeFile: f.name, mime: f.type, dimensione: f.size,
     stato: 'carica', trascrizione: '', appunti: '', errore: '',
   };
-  if (s) await allegaSlide(l, s);
   await DB.salva(l);
   try { await DB.salvaAudio(l.id, f); } catch (_) { /* senza copia locale non si potrà riprendere senza riscegliere il file */ }
   svuotaModulo();
@@ -405,14 +382,11 @@ $('#crea-da-testo').addEventListener('click', async () => {
   const testo = $('#testo-trascrizione').value.trim();
   if (testo.length < 200) { toast('La trascrizione è troppo corta'); return; }
   const nomeTxt = $('#file-testo').files[0] ? $('#file-testo').files[0].name : '';
-  const s = slideValide($('#slide').files[0]);
-  if (s === false) return;
   const l = {
     id: nuovoId(), creata: new Date().toISOString(), ...leggiModulo(),
     nomeFile: nomeTxt || 'trascrizione', stato: 'appunti', trascrizione: testo, appunti: '', errore: '',
   };
   if (!l.titolo && nomeTxt) l.titolo = senzaEstensione(nomeTxt);
-  if (s) await allegaSlide(l, s);
   await DB.salva(l);
   svuotaModulo();
   $('#da-testo').hidden = true;
@@ -469,8 +443,7 @@ try {
   }
 } catch (_) { /* localStorage non disponibile */ }
 
-// Un elenco di modelli per ogni compito. La trascrizione usa Flash (basta, e ha più quota);
-// gli appunti provano prima Pro, che scrive meglio, e ne consumano una sola richiesta per lezione.
+// Un elenco di modelli per ogni compito: Flash sia per la trascrizione sia per gli appunti.
 async function assicuraModelli(chiave) {
   let modelli = Imp.modelli;
   if (!modelli.length) {
@@ -480,7 +453,6 @@ async function assicuraModelli(chiave) {
   if (!modelli.length) throw new Error('La chiave non dà accesso a nessun modello Gemini adatto.');
   const disponibili = modelli.filter((m) => !esaurito(m));
   const lista = disponibili.length ? disponibili : modelli;
-  const pro = lista.filter((m) => /pro/.test(m.id) && !/flash/.test(m.id));
   const flash = lista.filter((m) => /flash/.test(m.id) && !/lite/.test(m.id));
   const lite = lista.filter((m) => /flash-lite/.test(m.id));
   const scelto = lista.find((m) => m.id === Imp.modello);
@@ -494,8 +466,7 @@ async function assicuraModelli(chiave) {
   const perTrascrivere = esisteFlash ? flashLiberi : base;
   return {
     trascrizione: primo(perTrascrivere, scelto && perTrascrivere.includes(scelto) ? scelto : null),
-    appunti: primo([...pro.slice(0, 2), ...base], scelto),
-    controllo: [...pro.slice(0, 2), ...base], // il controllo è il passaggio che decide la fedeltà: meglio Pro
+    appunti: primo(base, scelto),
   };
 }
 
@@ -567,7 +538,7 @@ async function avvia(l, audio) {
   lavoro = { id: l.id, controller };
   lezioneAperta = l.id;
   $('#lavoro-titolo').textContent = l.titolo || senzaEstensione(l.nomeFile) || 'Nuova lezione';
-  for (const p of ['carica', 'trascrivi', 'appunti', 'controllo']) passo(p, '', '');
+  for (const p of ['carica', 'trascrivi', 'appunti']) passo(p, '', '');
   anteprima('');
   vai('lavoro', 'In corso');
   const rilascia = await tieniSchermoAcceso();
@@ -580,7 +551,7 @@ async function avvia(l, audio) {
     l.stato = 'errore';
     l.errore = e.name === 'AbortError' ? 'Annullato.' : (e.message || String(e));
     await DB.salva(l);
-    for (const p of ['carica', 'trascrivi', 'appunti', 'controllo']) {
+    for (const p of ['carica', 'trascrivi', 'appunti']) {
       if ($(`#passi [data-passo="${p}"]`).classList.contains('attivo')) passo(p, 'errore');
     }
     if (vistaCorrente === 'lavoro') apriLezione(l.id);
@@ -588,30 +559,6 @@ async function avvia(l, audio) {
   } finally {
     lavoro = null;
     rilascia();
-  }
-}
-
-// Carica su Gemini il PDF delle slide (se c'è); un problema con le slide non blocca gli appunti.
-async function preparaSlide(l, chiave, signal) {
-  if (!l.nomeSlide) return null;
-  if (fileAncoraValido(l.fileSlide)) return l.fileSlide;
-  let blob = null;
-  try { blob = await DB.leggiSlide(l.id); } catch (_) { blob = null; }
-  if (!blob) return null;
-  try {
-    const f = await caricaFile(chiave, blob, 'application/pdf', nomeFileSicuro(l.nomeSlide), {
-      signal,
-      onProgress: (p) => infoPasso('appunti', `invio delle slide… ${Math.round(p * 100)}%`),
-    });
-    infoPasso('appunti', 'Gemini sta leggendo le slide…');
-    const a = await attendiFileAttivo(chiave, f.name, { signal });
-    l.fileSlide = { name: a.name, uri: a.uri, scade: a.expirationTime };
-    await DB.salva(l);
-    return l.fileSlide;
-  } catch (e) {
-    if (e.name === 'AbortError') throw e;
-    toast('Slide non usate: ' + (e.message || e), 6000);
-    return null;
   }
 }
 
@@ -799,10 +746,8 @@ async function eseguiLavoro(l, audio, signal) {
   passo('appunti', 'attivo');
   l.stato = 'appunti';
   await DB.salva(l);
-  const slide = await preparaSlide(l, chiave, signal);
-  const allegati = slide ? [{ file_data: { mime_type: 'application/pdf', file_uri: slide.uri } }] : [];
   const fermaTimerAppunti = attesaConTimer('appunti');
-  const r = await conModelli(modelli.appunti, (m) => genera(chiave, m.id, [...allegati, { text: promptAppunti(l, !!slide) }], {
+  const r = await conModelli(modelli.appunti, (m) => genera(chiave, m.id, [{ text: promptAppunti(l) }], {
     maxOutputTokens: m.outputMax || undefined,
     temperature: 0.2,
     signal,
@@ -811,107 +756,12 @@ async function eseguiLavoro(l, audio, signal) {
   l.appunti = pulisciMarkdown(r.testo);
   l.appuntiTroncati = r.troncato;
   l.modelloAppunti = r.modello;
-  l.slideUsate = !!slide;
   if (!l.titolo) l.titolo = titoloDaAppunti(l.appunti) || senzaEstensione(l.nomeFile);
-  l.controllo = null;
-  l.stato = 'controllo';
-  await DB.salva(l);
   passo('appunti', 'fatto', `${parole(l.appunti)} parole`);
 
-  // Controllo: un secondo passaggio confronta gli appunti con la trascrizione e corregge
-  // ciò che non torna. Se non riesce, gli appunti restano comunque (non controllati).
-  passo('controllo', 'attivo');
-  const fermaTimerControllo = attesaConTimer('controllo');
-  try {
-    const c = await conModelli(modelli.controllo, (m) => generaJSON(chiave, m.id, [...allegati, { text: promptControllo(l, !!slide) }], SCHEMA_CONTROLLO, {
-      maxOutputTokens: m.outputMax || undefined,
-      signal,
-      onText: (t) => { if (!t) return; fermaTimerControllo(); infoPasso('controllo', `${nomeModello(m)}: confronto con la trascrizione…`); },
-    }), { signal, onAttesa: (msg) => { fermaTimerControllo(); infoPasso('controllo', msg); } });
-    const esito = applicaCorrezioni(l.appunti, (c.json && c.json.correzioni) || []);
-    l.appunti = esito.testo;
-    l.controllo = { applicate: esito.applicate, saltate: esito.saltate, modello: c.modello };
-    passo('controllo', 'fatto', `${esito.applicate.length} correzioni`);
-  } catch (e) {
-    l.controllo = { errore: e.name === 'AbortError' ? 'annullato' : (e.message || String(e)) };
-    passo('controllo', 'errore', 'non eseguito');
-  } finally {
-    fermaTimerControllo();
-  }
   l.stato = 'pronta';
   l.errore = '';
   await DB.salva(l);
-}
-
-const SCHEMA_CONTROLLO = {
-  type: 'OBJECT',
-  properties: {
-    correzioni: {
-      type: 'ARRAY',
-      items: {
-        type: 'OBJECT',
-        properties: { trova: { type: 'STRING' }, sostituisci: { type: 'STRING' }, motivo: { type: 'STRING' } },
-        required: ['trova', 'sostituisci', 'motivo'],
-      },
-    },
-  },
-  required: ['correzioni'],
-};
-
-// Chiede una risposta JSON; se il modello non accetta lo schema, lo chiede solo a parole.
-async function generaJSON(chiave, modello, parts, schema, opzioni) {
-  const leggi = (testo) => {
-    const t = testo.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-    const i = t.indexOf('{');
-    const j = t.lastIndexOf('}');
-    if (i < 0 || j < i) throw new GeminiError('Risposta del controllo non leggibile.');
-    return JSON.parse(t.slice(i, j + 1));
-  };
-  let r;
-  try {
-    r = await genera(chiave, modello, parts, {
-      ...opzioni, temperature: 0, extraConfig: { responseMimeType: 'application/json', responseSchema: schema },
-    });
-  } catch (e) {
-    if (!(e instanceof GeminiError && e.status === 400)) throw e;
-    r = await genera(chiave, modello, parts, { ...opzioni, temperature: 0 });
-  }
-  return { ...r, json: leggi(r.testo) };
-}
-
-// Applica le correzioni del controllo solo dove il testo da cambiare si trova davvero negli appunti.
-function applicaCorrezioni(md, correzioni) {
-  let testo = md;
-  const applicate = [];
-  let saltate = 0;
-  const escapeRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  for (const c of correzioni.slice(0, 100)) {
-    const trova = String((c && c.trova) || '').trim();
-    const sost = String((c && c.sostituisci) || '').trim();
-    const titolo = /^#{1,6}\s/;
-    if (!trova || trova === sost || trova.length > 3000 || sost.length > trova.length * 2 + 300 ||
-        (titolo.test(trova) && !titolo.test(sost))) { saltate++; continue; }
-    let i = testo.indexOf(trova);
-    let lung = trova.length;
-    if (i < 0) {
-      const m = new RegExp(trova.split(/\s+/).map(escapeRe).join('\\s+')).exec(testo);
-      if (m) { i = m.index; lung = m[0].length; }
-    }
-    if (i < 0) { saltate++; continue; }
-    testo = testo.slice(0, i) + sost + testo.slice(i + lung);
-    applicate.push({ prima: trova, dopo: sost, motivo: String((c && c.motivo) || '') });
-  }
-  // un titolo ## o ### rimasto senza contenuto (es. la sua unica frase era inventata) si toglie
-  const righe = testo.split('\n');
-  const livello = (r) => { const m = /^(#{1,6})\s/.exec(r); return m ? m[1].length : 0; };
-  const tenute = righe.filter((r, i) => {
-    const lv = livello(r);
-    if (lv < 2) return true;
-    let j = i + 1;
-    while (j < righe.length && !righe[j].trim()) j++;
-    return !(j >= righe.length || (livello(righe[j]) && livello(righe[j]) <= lv));
-  });
-  return { testo: tenute.join('\n').replace(/\n{3,}/g, '\n\n'), applicate, saltate };
 }
 
 $('#annulla').addEventListener('click', () => {
@@ -938,7 +788,7 @@ async function apriLezione(id) {
   if (l.stato === 'errore') avvisi.push(['errore', 'Non completato: ' + (l.errore || 'errore sconosciuto')]);
   if (l.trascrizioneTroncata) avvisi.push(['', 'Una parte della trascrizione è stata troncata: gli appunti potrebbero non coprire tutta la lezione. Puoi rifare la trascrizione a blocchi più piccoli.']);
   if (l.trascrizioneSospetta) avvisi.push(['', `La trascrizione ha ${parole(l.trascrizione)} parole, troppe per ${Math.round(l.durata / 60)} minuti di lezione: probabilmente contiene parti ripetute. Conviene rifarla.`]);
-  if (l.appunti && /lite/.test(l.modelloAppunti || '')) avvisi.push(['', `Gli appunti sono stati scritti da ${nomeModelloId(l.modelloAppunti)} perché Pro e Flash non erano disponibili: di solito sono più corti e meno precisi. Conviene premere "Rigenera appunti" più tardi o domani dopo le 9.`]);
+  if (l.appunti && /lite/.test(l.modelloAppunti || '')) avvisi.push(['', `Gli appunti sono stati scritti da ${nomeModelloId(l.modelloAppunti)} perché Flash non era disponibile: di solito sono più corti e meno precisi. Conviene premere "Rigenera appunti" più tardi o domani dopo le 9.`]);
   if (l.appuntiTroncati) avvisi.push(['', 'Gli appunti sono stati troncati perché troppo lunghi. Prova "Rigenera appunti".']);
   if (avvisi.length || l.stato === 'errore') {
     stato.hidden = false;
@@ -952,12 +802,10 @@ async function apriLezione(id) {
     else if (l.trascrizioneTroncata || l.trascrizioneSospetta) stato.append(...pulsantiRitrascrivi(l));
   }
 
-  const usati = [['trascrizione', l.modelloTrascrizione], ['appunti', l.modelloAppunti], ['controllo', l.controllo && l.controllo.modello]]
+  const usati = [['trascrizione', l.modelloTrascrizione], ['appunti', l.modelloAppunti]]
     .filter(([, id]) => id).map(([passo, id]) => `${passo}: ${nomeModelloId(id)}`);
   $('#lezione-modelli').textContent = usati.length ? 'Modelli usati · ' + usati.join(' · ') : '';
   $('#lezione-modelli').hidden = !usati.length;
-  mostraControllo(l);
-  mostraSlide(l);
   const art = $('#appunti');
   if (l.appunti) {
     art.hidden = false;
@@ -977,60 +825,6 @@ async function apriLezione(id) {
   } else {
     art.hidden = true;
     art.textContent = '';
-  }
-}
-
-// Riquadro delle slide: si possono aggiungere o cambiare anche dopo, poi si preme Rigenera.
-function mostraSlide(l) {
-  $('#slide-box').hidden = !l.trascrizione;
-  $('#slide-stato').textContent = l.nomeSlide
-    ? `Slide: ${l.nomeSlide}${l.appunti && !l.slideUsate ? ' (non ancora usate: premi Rigenera)' : ''}`
-    : 'Nessuna slide allegata.';
-  $('#slide-cambia').textContent = l.nomeSlide ? 'Cambia slide' : 'Aggiungi slide (PDF)';
-}
-$('#slide-cambia').addEventListener('click', () => $('#slide-lezione').click());
-$('#slide-lezione').addEventListener('change', async () => {
-  const f = slideValide($('#slide-lezione').files[0]);
-  $('#slide-lezione').value = '';
-  if (!f) return;
-  const l = await DB.leggi(lezioneAperta);
-  await allegaSlide(l, f);
-  l.slideUsate = false;
-  await DB.salva(l);
-  mostraSlide(l);
-  toast('Slide allegate: premi "Rigenera" per rifare gli appunti con le slide', 5000);
-});
-
-// Riquadro con le correzioni fatte dal controllo, per vedere cosa è cambiato e perché.
-function mostraControllo(l) {
-  const box = $('#controllo-box');
-  const elenco = $('#controllo-elenco');
-  elenco.textContent = '';
-  box.open = false;
-  if (!l.appunti || !l.controllo) { box.hidden = true; return; }
-  box.hidden = false;
-  if (l.controllo.errore) {
-    $('#controllo-titolo').textContent = 'Controllo non eseguito';
-    const p = document.createElement('p');
-    p.className = 'aiuto';
-    p.textContent = `Gli appunti non sono stati ricontrollati (${l.controllo.errore}). Puoi premere "Rigenera" più tardi.`;
-    elenco.append(p);
-    return;
-  }
-  const n = l.controllo.applicate.length;
-  $('#controllo-titolo').textContent = n ? `Controllo: ${n} ${n === 1 ? 'correzione' : 'correzioni'} rispetto alla trascrizione` : 'Controllo: nessuna correzione necessaria';
-  for (const c of l.controllo.applicate) {
-    const d = document.createElement('div');
-    d.className = 'correzione';
-    const m = document.createElement('div');
-    m.className = 'motivo';
-    m.textContent = c.motivo || 'Correzione';
-    const prima = document.createElement('del');
-    prima.textContent = c.prima;
-    const dopo = document.createElement('ins');
-    dopo.textContent = c.dopo || '(tolto)';
-    d.append(m, prima, document.createElement('br'), dopo);
-    elenco.append(d);
   }
 }
 
@@ -1191,7 +985,7 @@ $('#indietro').addEventListener('click', tornaHome);
   // Un lavoro rimasto a metà (app chiusa o ricaricata) diventa "da riprendere".
   try {
     for (const l of await DB.tutte()) {
-      if (['carica', 'trascrivi', 'appunti', 'controllo'].includes(l.stato)) {
+      if (['carica', 'trascrivi', 'appunti'].includes(l.stato)) {
         l.stato = 'errore';
         l.errore = 'Interrotto (l\'app è stata chiusa o il telefono ha sospeso il lavoro).';
         await DB.salva(l);
